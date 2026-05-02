@@ -1,0 +1,41 @@
+name: CTM Daily Scan
+
+on:
+  schedule:
+    - cron: '30 12 * * 1-5'   # 6:00 PM IST (12:30 UTC), Mon-Fri
+  workflow_dispatch:            # manual trigger anytime from GitHub
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write           # needed to commit trades.json + dashboard
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Run CTM engine
+        env:
+          CHARTINK_EMAIL:    ${{ secrets.CHARTINK_EMAIL }}
+          CHARTINK_PASSWORD: ${{ secrets.CHARTINK_PASSWORD }}
+          STOP_LOSS_PCT:     "5.0"
+          TARGET_PCT:        "15.0"
+          POSITION_SIZE:     "25000"
+          MAX_POSITIONS:     "20"
+        run: python ctm/main.py
+
+      - name: Commit updated data + dashboard
+        run: |
+          git config user.name  "CTM Bot"
+          git config user.email "ctm-bot@users.noreply.github.com"
+          git add data/trades.json docs/index.html
+          git diff --staged --quiet || git commit -m "Auto update $(date +'%Y-%m-%d %H:%M IST')"
+          git push
