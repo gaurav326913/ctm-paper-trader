@@ -1,16 +1,12 @@
 {
   "positions": [],
+  "pending": [],
+  "equity_curve": [],
   "settings": {
-    "sl": 5.0,
-    "tgt": 15.0,
     "posSize": 25000,
     "maxPos": 20,
-    "minScans": 3
-  },
-  "equity_curve": [
-    {
-      "date": "2026-05-03",
-      "pnl": 0
-    }
-  ]
+    "minScans": 3,
+    "atrSL": 2.0,
+    "atrTgt": 4.0
+  }
 }
