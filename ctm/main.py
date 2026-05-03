@@ -1,15 +1,21 @@
 """main.py — orchestrates the full daily run."""
 
-import logging, datetime, os
+import logging, datetime, os, sys
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger("ctm")
 
-DOCS_PATH = os.path.join(os.path.dirname(__file__), "..", "docs", "index.html")
+# Ensure repo root is on the path
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+DATA_FILE  = os.path.join(ROOT, "data", "trades.json")
+DOCS_PATH  = os.path.join(ROOT, "docs", "index.html")
 
 
 def main():
     log.info("=" * 55)
-    log.info("CTM Paper Trader — %s", datetime.date.today().strftime("%d %b %Y"))
+    log.info("CTM Paper Trader -- %s", datetime.date.today().strftime("%d %b %Y"))
     log.info("=" * 55)
 
     from ctm.chartink import fetch_all
@@ -23,7 +29,7 @@ def main():
     log.info("  %d unique symbols across all scans", len(all_syms))
 
     log.info("Step 2/5: Loading existing trades...")
-    data = load()
+    data = load(DATA_FILE)
     open_syms = [p["symbol"] for p in data["positions"] if p["status"] == "open"]
 
     log.info("Step 3/5: Fetching NSE closing prices...")
@@ -38,7 +44,7 @@ def main():
     log.info("  New trades: %d", len(new_trades))
 
     update_equity_curve(data)
-    save(data)
+    save(data, DATA_FILE)
 
     n_open = sum(1 for p in data["positions"] if p["status"] == "open")
     n_cl   = sum(1 for p in data["positions"] if p["status"] == "closed")
