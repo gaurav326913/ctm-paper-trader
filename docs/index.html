@@ -43,7 +43,7 @@
 
 <div class="header">
   <h1>CTM Paper Trader</h1>
-  <div class="updated">Last updated: 03 May 2026, 16:14 IST</div>
+  <div class="updated">Last updated: 03 May 2026, 16:38 IST</div>
 </div>
 
 <div class="container">
@@ -73,10 +73,11 @@
   </div>
 
   <!-- Tabs -->
-  <div class="tabs">
+  <div style="background:#10B98120;border:1px solid #10B981;color:#10B981;padding:10px 16px;border-radius:8px;font-size:13px;margin-bottom:16px">Market healthy — Nifty 50 above 200 DMA. New entries enabled.</div><div class="tabs">
     <button class="tab active" onclick="showTab('open')">Open Positions (0)</button>
     <button class="tab" onclick="showTab('closed')">Trade History (0)</button>
     <button class="tab" onclick="showTab('scans')">Today's Scans</button>
+    <button class="tab" onclick="showTab('pending')">Pending Entry (0)</button>
   </div>
 
   <div id="tab-open" class="tab-content active">
@@ -90,6 +91,8 @@
       <div class="empty">No closed trades yet.</div>
     </div>
   </div>
+
+  <div id="tab-pending" class="tab-content" style="display:none"><div style="text-align:center;padding:32px;color:#475569">No pending trades.</div></div>
 
   <div id="tab-scans" class="tab-content">
     <div class="table-wrap">
