@@ -32,6 +32,7 @@ jobs:
           TARGET_PCT:        "15.0"
           POSITION_SIZE:     "25000"
           MAX_POSITIONS:     "20"
+          MIN_SCANS:         "3"
 
       - name: Commit updated data + dashboard
         run: |
