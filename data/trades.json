@@ -7,5 +7,10 @@
     "maxPos": 20,
     "minScans": 3
   },
-  "equity_curve": []
+  "equity_curve": [
+    {
+      "date": "2026-05-03",
+      "pnl": 0
+    }
+  ]
 }
