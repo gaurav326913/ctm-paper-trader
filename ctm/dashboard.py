@@ -285,3 +285,77 @@ def write(data: dict, scan_results: dict, output_path: str):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
+
+
+def write_v3(data: dict, scan_results: dict, output_path: str, market_healthy: bool = True):
+    """
+    Extended write that injects pending queue and Nifty health into the dashboard.
+    Calls the base generate() then patches in the extra sections.
+    """
+    import re
+
+    pend    = data.get("pending", [])
+    pos     = data.get("positions", [])
+    cl      = [p for p in pos if p["status"] == "closed"]
+    op      = [p for p in pos if p["status"] == "open"]
+
+    # Build pending rows
+    def scan_badge_plain(sid):
+        m = SCANS_META.get(sid, {"label": sid, "color": "#6B7280"})
+        return (f'<span style="background:{m["color"]}22;color:{m["color"]};'
+                f'padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600">'
+                f'{m["label"]}</span>')
+
+    pend_rows = ""
+    for p in pend:
+        pend_rows += f"""<tr class="trow">
+          <td><b>{p["symbol"]}</b></td>
+          <td>{"".join(scan_badge_plain(s) for s in p["scans"])}</td>
+          <td>{p["scanDate"]}</td>
+          <td style="color:#F59E0B">Entering at tomorrow's open</td>
+        </tr>"""
+
+    pend_table = (
+        f'<table width="100%" style="border-collapse:collapse">'
+        f'<thead><tr>'
+        f'<th style="padding:7px 10px;background:#1a1a2e;color:#fff;text-align:left">Symbol</th>'
+        f'<th style="padding:7px 10px;background:#1a1a2e;color:#fff;text-align:left">Scans</th>'
+        f'<th style="padding:7px 10px;background:#1a1a2e;color:#fff;text-align:left">Scan Date</th>'
+        f'<th style="padding:7px 10px;background:#1a1a2e;color:#fff;text-align:left">Status</th>'
+        f'</tr></thead><tbody>{pend_rows}</tbody></table>'
+        if pend_rows else
+        '<div style="text-align:center;padding:32px;color:#475569">No pending trades.</div>'
+    )
+
+    # Nifty banner
+    if market_healthy:
+        banner = ('<div style="background:#10B98120;border:1px solid #10B981;color:#10B981;'
+                  'padding:10px 16px;border-radius:8px;font-size:13px;margin-bottom:16px">'
+                  'Market healthy — Nifty 50 above 200 DMA. New entries enabled.</div>')
+    else:
+        banner = ('<div style="background:#EF444420;border:1px solid #EF4444;color:#EF4444;'
+                  'padding:10px 16px;border-radius:8px;font-size:13px;margin-bottom:16px">'
+                  'Market caution — Nifty 50 below 200 DMA. No new entries until market recovers.</div>')
+
+    # Generate base HTML
+    html = generate(data, scan_results)
+
+    # Inject banner before the tabs
+    html = html.replace(
+        '<div class="tabs">',
+        banner + '<div class="tabs">'
+    )
+
+    # Inject pending tab button and content
+    html = html.replace(
+        "Today's Scans</button>",
+        f"Today's Scans</button>\n    <button class=\"tab\" onclick=\"showTab('pending')\">Pending Entry ({len(pend)})</button>"
+    )
+    html = html.replace(
+        '<div id="tab-scans"',
+        f'<div id="tab-pending" class="tab-content" style="display:none">{pend_table}</div>\n\n  <div id="tab-scans"'
+    )
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(html)
