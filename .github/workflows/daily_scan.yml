@@ -2,7 +2,10 @@ name: CTM Daily Scan
 
 on:
   schedule:
+    # Evening scan: 6:00 PM IST (12:30 UTC) Mon-Fri — run Chartink, queue candidates
     - cron: '30 12 * * 1-5'
+    # Morning entry: 9:20 AM IST (03:50 UTC) Mon-Fri — enter at actual open price
+    - cron: '50 3 * * 1-5'
   workflow_dispatch:
 
 jobs:
@@ -28,16 +31,16 @@ jobs:
         env:
           CHARTINK_EMAIL:    ${{ secrets.CHARTINK_EMAIL }}
           CHARTINK_PASSWORD: ${{ secrets.CHARTINK_PASSWORD }}
-          STOP_LOSS_PCT:     "5.0"
-          TARGET_PCT:        "15.0"
           POSITION_SIZE:     "25000"
           MAX_POSITIONS:     "20"
           MIN_SCANS:         "3"
+          ATR_SL_MULT:       "2"
+          ATR_TGT_MULT:      "4"
 
       - name: Commit updated data + dashboard
         run: |
           git config user.name  "CTM Bot"
           git config user.email "ctm-bot@users.noreply.github.com"
           git add data/trades.json docs/index.html
-          git diff --staged --quiet || git commit -m "Auto update $(date +'%Y-%m-%d')"
+          git diff --staged --quiet || git commit -m "Auto update $(date +'%Y-%m-%d %H:%M')"
           git push
