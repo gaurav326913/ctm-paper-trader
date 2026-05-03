@@ -9,23 +9,21 @@ TGT_PCT  = float(os.environ.get("TARGET_PCT",    15.0))
 POS_SIZE = int(os.environ.get("POSITION_SIZE",  25000))
 MAX_POS  = int(os.environ.get("MAX_POSITIONS",     20))
 
-DATA_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "trades.json")
 
-
-def load() -> dict:
-    if not os.path.exists(DATA_FILE):
-        os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
+def load(data_file: str) -> dict:
+    if not os.path.exists(data_file):
+        os.makedirs(os.path.dirname(data_file), exist_ok=True)
         return {"positions": [], "settings": {"sl": SL_PCT, "tgt": TGT_PCT, "posSize": POS_SIZE, "maxPos": MAX_POS}, "equity_curve": []}
-    with open(DATA_FILE) as f:
+    with open(data_file) as f:
         d = json.load(f)
     if "equity_curve" not in d:
         d["equity_curve"] = []
     return d
 
 
-def save(data: dict):
-    os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-    with open(DATA_FILE, "w") as f:
+def save(data: dict, data_file: str):
+    os.makedirs(os.path.dirname(data_file), exist_ok=True)
+    with open(data_file, "w") as f:
         json.dump(data, f, indent=2)
 
 
@@ -87,12 +85,10 @@ def enter_trades(data: dict, scan_results: dict, prices: dict, scan_date: str) -
 
 
 def update_equity_curve(data: dict):
-    """Append today's realized P&L snapshot to the equity curve."""
     closed = [p for p in data["positions"] if p["status"] == "closed"]
     total  = round(sum(p["pnl"] for p in closed if p.get("pnl")), 2)
     today  = datetime.date.today().isoformat()
     curve  = data.setdefault("equity_curve", [])
-    # Only one entry per day
     if curve and curve[-1]["date"] == today:
         curve[-1]["pnl"] = total
     else:
