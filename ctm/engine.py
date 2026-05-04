@@ -3,7 +3,7 @@ engine.py
 Paper trade engine with:
   - Pending queue: stocks identified at 6 PM, entered next morning at open
   - ATR-based SL (2x ATR) and Target (4x ATR)
-  - Min scans filter
+  - Swing-trading scan qualification rules (replaces MIN_SCANS)
 """
 
 import json, os, time, datetime, logging
@@ -12,11 +12,46 @@ log = logging.getLogger("ctm.engine")
 
 POS_SIZE   = int(os.environ.get("POSITION_SIZE", 25000))
 MAX_POS    = int(os.environ.get("MAX_POSITIONS",    20))
-MIN_SCANS  = int(os.environ.get("MIN_SCANS",         3))
 ATR_SL     = float(os.environ.get("ATR_SL_MULT",   2.0))
 ATR_TGT    = float(os.environ.get("ATR_TGT_MULT",  4.0))
 FB_SL_PCT  = 5.0    # fallback SL % if ATR unavailable
 FB_TGT_PCT = 10.0   # fallback target % if ATR unavailable
+
+
+# ── Swing trading scan qualification rules ────────────────────────────────────
+#
+# Tier 1: queue regardless of Nifty health (high conviction setups)
+TIER1_COMBOS = [
+    {"champion-w"},                   # weekly trend intact — strongest signal
+    {"champion-d", "contraction"},    # trending + coiling = classic swing entry
+    {"champion-d", "bigmover"},       # trend confirmed by 6-month breakout
+    {"champion-d", "indstrong"},      # quality large-cap in uptrend
+]
+
+# Tier 2: queue only when Nifty is healthy (good but need market tailwind)
+TIER2_COMBOS = [
+    {"champion-d"},                   # daily trend alone
+    {"ppc"},                          # institutional volume buying
+    {"contraction"},                  # coiling in uptrend
+]
+
+# Excluded from entry qualification:
+#   bigmover alone  — noise, not signal
+#   indstrong alone — quality filter, not a trigger
+#   npc             — repurposed as exit alert on open positions
+#   newstock        — IPOs lack ATR history
+
+
+def _qualifies(scans_set: set, market_healthy: bool) -> bool:
+    """Return True if the stock's scan set meets Tier 1 or Tier 2 criteria."""
+    for combo in TIER1_COMBOS:
+        if combo.issubset(scans_set):
+            return True
+    if market_healthy:
+        for combo in TIER2_COMBOS:
+            if combo.issubset(scans_set):
+                return True
+    return False
 
 
 def load(data_file: str) -> dict:
@@ -46,7 +81,6 @@ def _empty() -> dict:
         "settings": {
             "posSize":  POS_SIZE,
             "maxPos":   MAX_POS,
-            "minScans": MIN_SCANS,
             "atrSL":    ATR_SL,
             "atrTgt":   ATR_TGT,
         },
@@ -58,52 +92,62 @@ def _empty() -> dict:
 def queue_candidates(data: dict, scan_results: dict, scan_date: str,
                      market_healthy: bool) -> list:
     """
-    Called at 6 PM. Filters scan results and adds qualifying stocks
-    to the pending queue for next morning's entry.
+    Called at 6 PM. Filters scan results using swing-trading
+    qualification rules and queues stocks for next morning's entry.
     Returns list of newly queued symbols.
     """
-    if not market_healthy:
-        log.info("Market unhealthy (Nifty below 200 DMA) — no new candidates queued.")
-        data["pending"] = []   # clear any stale pending
-        return []
-
-    s         = data["settings"]
-    min_scans = s.get("minScans", MIN_SCANS)
+    s = data["settings"]
     already_open    = {p["symbol"] for p in data["positions"] if p["status"] == "open"}
     already_pending = {p["symbol"] for p in data.get("pending", [])}
 
-    # Build symbol -> scan list
+    # Build symbol -> set of scan ids
     seen: dict = {}
     for sid, syms in scan_results.items():
         for sym in syms:
-            seen.setdefault(sym, []).append(sid)
+            seen.setdefault(sym, set()).add(sid)
 
-    # Filter by min scans
-    qualified = {sym: sids for sym, sids in seen.items()
-                 if len(sids) >= min_scans
-                 and sym not in already_open
-                 and sym not in already_pending}
+    # NPC: repurpose as exit alert on open positions (not an entry signal)
+    npc_syms = set(scan_results.get("npc", []))
+    npc_open = npc_syms & already_open
+    if npc_open:
+        log.warning("NPC alert (high-volume down day) on open positions — review exits: %s",
+                    ", ".join(sorted(npc_open)))
 
-    log.info("Candidates qualified (%d+ scans): %d stocks — %s",
-             min_scans, len(qualified),
-             ", ".join(qualified.keys()) if qualified else "none")
+    # Qualify candidates using swing trading rules
+    qualified = {
+        sym: sids for sym, sids in seen.items()
+        if _qualifies(sids, market_healthy)
+        and sym not in already_open
+        and sym not in already_pending
+        and "npc" not in sids or len(sids) > 1    # never queue NPC-only stocks
+    }
 
-    # Add to pending queue
+    if not market_healthy:
+        log.info("Market unhealthy (Nifty below 200 DMA) — only Tier 1 setups qualify.")
+
+    log.info("Candidates qualified: %d stocks — %s",
+             len(qualified),
+             ", ".join(
+                 f"{sym}({','.join(sorted(sids))})"
+                 for sym, sids in qualified.items()
+             ) if qualified else "none")
+
+    # Queue up to position limit
     queued = []
     for sym, sids in qualified.items():
         n_open = sum(1 for p in data["positions"] if p["status"] == "open")
         if n_open + len(data.get("pending", [])) >= s["maxPos"]:
-            log.info("Position limit reached — not queuing more.")
+            log.info("Position limit reached (%d) — not queuing more.", s["maxPos"])
             break
         entry = {
             "symbol":   sym,
-            "scans":    sids,
+            "scans":    sorted(sids),
             "scanDate": scan_date,
             "queuedAt": datetime.datetime.now().isoformat(),
         }
         data.setdefault("pending", []).append(entry)
         queued.append(sym)
-        log.info("  QUEUED %-12s (scans: %s)", sym, ", ".join(sids))
+        log.info("  QUEUED %-12s (scans: %s)", sym, ", ".join(sorted(sids)))
 
     return queued
 
@@ -126,8 +170,8 @@ def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
     still_pending = []
 
     for item in pending:
-        sym  = item["symbol"]
-        px   = open_prices.get(sym)
+        sym = item["symbol"]
+        px  = open_prices.get(sym)
         if not px:
             log.warning("No open price for %s — keeping in queue for tomorrow.", sym)
             still_pending.append(item)
