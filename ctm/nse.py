@@ -4,7 +4,14 @@ Fetches from NSE's public endpoints:
   - Closing / opening prices
   - ATR (Average True Range) from historical OHLC
   - Nifty 50 health check vs 200 DMA
+
 No API key needed.
+
+Fixes vs original:
+  - is_market_healthy() now tries multiple endpoints for 200 DMA
+  - Falls back to checking Nifty vs its 52-week range as a proxy if all historical endpoints fail
+  - Session init retries on failure
+  - Explicit response content-type check before .json() to avoid cryptic parse errors
 """
 
 import logging, time, statistics
@@ -22,16 +29,36 @@ _sess.headers.update({
 _cookies_ready = False
 
 
+def _safe_json(r) -> dict | list | None:
+    """Parse JSON only if response looks valid. Returns None on failure."""
+    ct = r.headers.get("Content-Type", "")
+    if r.status_code != 200:
+        log.warning("HTTP %d from %s", r.status_code, r.url)
+        return None
+    if "json" not in ct and "javascript" not in ct:
+        log.warning("Unexpected Content-Type '%s' from %s — likely HTML error page", ct, r.url)
+        return None
+    try:
+        return r.json()
+    except Exception as e:
+        log.warning("JSON parse failed from %s: %s", r.url, e)
+        return None
+
+
 def _init():
     global _cookies_ready
     if _cookies_ready:
         return
-    try:
-        _sess.get("https://www.nseindia.com", timeout=15)
-        _sess.get("https://www.nseindia.com/market-data/live-equity-market", timeout=10)
-        _cookies_ready = True
-    except Exception as e:
-        log.warning("NSE cookie init: %s", e)
+    for attempt in range(3):
+        try:
+            _sess.get("https://www.nseindia.com", timeout=15)
+            _sess.get("https://www.nseindia.com/market-data/live-equity-market", timeout=10)
+            _cookies_ready = True
+            return
+        except Exception as e:
+            log.warning("NSE cookie init attempt %d failed: %s", attempt + 1, e)
+            time.sleep(2)
+    log.warning("NSE session init failed after 3 attempts — proceeding anyway")
 
 
 def get_quote(symbol: str) -> dict:
@@ -39,7 +66,7 @@ def get_quote(symbol: str) -> dict:
     _init()
     try:
         r = _sess.get(f"https://www.nseindia.com/api/quote-equity?symbol={symbol}", timeout=15)
-        return r.json()
+        return _safe_json(r) or {}
     except Exception as e:
         log.warning("Quote fetch failed for %s: %s", symbol, e)
         return {}
@@ -58,7 +85,7 @@ def get_closing_prices(symbols: list) -> dict:
     # Bulk fetch via F&O list (covers most liquid stocks)
     try:
         r    = _sess.get("https://www.nseindia.com/api/equity-stockIndices?index=SECURITIES%20IN%20F%26O", timeout=20)
-        data = r.json().get("data", [])
+        data = (_safe_json(r) or {}).get("data", [])
         bulk = {row["symbol"]: float(str(row["lastPrice"]).replace(",", ""))
                 for row in data if "symbol" in row and "lastPrice" in row}
         for sym in symbols:
@@ -91,11 +118,10 @@ def get_atr(symbol: str, period: int = 14) -> float | None:
     """
     _init()
     try:
-        # Fetch last 60 days of OHLC to comfortably calculate 14-day ATR
         url = (f"https://www.nseindia.com/api/historical/cm/equity"
                f"?symbol={symbol}&series=[%22EQ%22]&duration=60")
         r    = _sess.get(url, timeout=20)
-        data = r.json().get("data", [])
+        data = (_safe_json(r) or {}).get("data", [])
         if len(data) < period + 1:
             return None
 
@@ -104,8 +130,8 @@ def get_atr(symbol: str, period: int = 14) -> float | None:
 
         true_ranges = []
         for i in range(1, len(data)):
-            high  = float(data[i]["CH_TRADE_HIGH_PRICE"])
-            low   = float(data[i]["CH_TRADE_LOW_PRICE"])
+            high       = float(data[i]["CH_TRADE_HIGH_PRICE"])
+            low        = float(data[i]["CH_TRADE_LOW_PRICE"])
             prev_close = float(data[i-1]["CH_CLOSING_PRICE"])
             tr = max(
                 high - low,
@@ -141,40 +167,100 @@ def get_atrs(symbols: list, period: int = 14) -> dict:
     return result
 
 
+def _get_nifty_current() -> float | None:
+    """Fetch current Nifty 50 level. Returns None on failure."""
+    try:
+        r    = _sess.get("https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%2050", timeout=15)
+        data = (_safe_json(r) or {}).get("data", [])
+        row  = next((x for x in data if x.get("symbol") == "NIFTY 50"), None)
+        if row:
+            return float(str(row["lastPrice"]).replace(",", ""))
+    except Exception as e:
+        log.warning("Nifty current price fetch failed: %s", e)
+    return None
+
+
+def _get_nifty_200dma() -> float | None:
+    """
+    Fetch Nifty 50 historical closes and compute 200 DMA.
+    Tries two endpoints — NSE blocks GitHub Actions IPs intermittently.
+    Returns None if both fail.
+    """
+    endpoints = [
+        ("https://www.nseindia.com/api/historical/indicesHistory"
+         "?indexType=NIFTY%2050&duration=250"),
+        ("https://www.nseindia.com/api/historical/indicesHistory"
+         "?indexType=NIFTY%2050&duration=300"),
+    ]
+    for url in endpoints:
+        try:
+            r    = _sess.get(url, timeout=25)
+            body = _safe_json(r)
+            if not body:
+                continue
+            hist = body.get("data", {}).get("indexCloseOnlineRecords", [])
+            if len(hist) < 200:
+                log.warning("Only %d days of Nifty history returned", len(hist))
+                continue
+            closes   = sorted(hist, key=lambda x: x.get("EOD_TIMESTAMP", ""))
+            last_200 = [float(x["EOD_CLOSE_INDEX_VAL"]) for x in closes[-200:]]
+            return round(statistics.mean(last_200), 2)
+        except Exception as e:
+            log.warning("Nifty history endpoint failed (%s): %s", url, e)
+            time.sleep(2)
+
+    return None
+
+
+def _nifty_above_52w_midpoint(current: float) -> bool:
+    """
+    Fallback health proxy: is Nifty above the midpoint of its 52-week range?
+    If yes, treat as healthy. Used only when 200 DMA fetch fails.
+    """
+    try:
+        r    = _sess.get("https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%2050", timeout=15)
+        data = (_safe_json(r) or {}).get("data", [])
+        row  = next((x for x in data if x.get("symbol") == "NIFTY 50"), None)
+        if not row:
+            return True
+        high52 = float(str(row.get("yearHigh", 0)).replace(",", ""))
+        low52  = float(str(row.get("yearLow",  0)).replace(",", ""))
+        if high52 and low52:
+            midpoint = (high52 + low52) / 2
+            log.info("Nifty 52w range fallback: %.2f–%.2f  midpoint=%.2f  current=%.2f — %s",
+                     low52, high52, midpoint, current,
+                     "ABOVE MID (proxy healthy)" if current > midpoint else "BELOW MID (proxy unhealthy)")
+            return current > midpoint
+    except Exception as e:
+        log.warning("52-week fallback also failed: %s", e)
+    return True   # final failsafe — don't block trades on data errors
+
+
 def is_market_healthy() -> bool:
     """
     Returns True if Nifty 50 is above its 200-day SMA.
-    If the check fails for any reason, returns True (fail-safe — don't block trades on data error).
+
+    Strategy:
+      1. Fetch current Nifty level
+      2. Try to compute 200 DMA from historical endpoint
+      3. If historical fetch fails, fall back to 52-week midpoint as proxy
+      4. If everything fails, return True (don't block trades on data errors)
     """
     _init()
-    try:
-        # Get Nifty 50 current level
-        r    = _sess.get("https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%2050", timeout=15)
-        data = r.json().get("data", [])
-        nifty_row = next((x for x in data if x.get("symbol") == "NIFTY 50"), None)
-        if not nifty_row:
-            log.warning("Nifty row not found — assuming market healthy")
-            return True
-        current = float(str(nifty_row["lastPrice"]).replace(",", ""))
 
-        # Get Nifty historical data for 200 DMA
-        url  = ("https://www.nseindia.com/api/historical/indicesHistory"
-                "?indexType=NIFTY%2050&duration=250")
-        r2   = _sess.get(url, timeout=20)
-        hist = r2.json().get("data", {}).get("indexCloseOnlineRecords", [])
-        if len(hist) < 200:
-            log.warning("Not enough Nifty history (%d days) — assuming healthy", len(hist))
-            return True
+    current = _get_nifty_current()
+    if not current:
+        log.warning("Could not fetch Nifty current price — assuming healthy")
+        return True
 
-        closes = sorted(hist, key=lambda x: x.get("EOD_TIMESTAMP", ""))
-        last_200 = [float(x["EOD_CLOSE_INDEX_VAL"]) for x in closes[-200:]]
-        sma200   = round(statistics.mean(last_200), 2)
+    sma200 = _get_nifty_200dma()
 
+    if sma200:
         healthy = current > sma200
         log.info("Nifty health: %.2f vs 200 DMA %.2f — %s",
-                 current, sma200, "HEALTHY" if healthy else "UNHEALTHY — no new entries")
+                 current, sma200, "HEALTHY ✓" if healthy else "UNHEALTHY ✗ — Tier 2 entries blocked")
         return healthy
 
-    except Exception as e:
-        log.warning("Nifty health check failed: %s — assuming healthy", e)
-        return True
+    # Historical endpoint failed — use 52-week midpoint as proxy
+    log.warning("200 DMA unavailable — using 52-week midpoint as health proxy")
+    return _nifty_above_52w_midpoint(current)
