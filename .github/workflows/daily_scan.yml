@@ -33,7 +33,6 @@ jobs:
           CHARTINK_PASSWORD: ${{ secrets.CHARTINK_PASSWORD }}
           POSITION_SIZE:     "25000"
           MAX_POSITIONS:     "20"
-          MIN_SCANS:         "3"
           ATR_SL_MULT:       "2"
           ATR_TGT_MULT:      "4"
 
