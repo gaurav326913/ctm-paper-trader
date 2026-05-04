@@ -117,7 +117,7 @@ def run_morning():
 
     # Rebuild dashboard with empty scan_results (morning has no scan data)
     scan_results = {sid: [] for sid in SCANS}
-    write_dash(data, scan_results, DOCS_PATH, healthy)
+    write_dash(data, scan_results, DOCS_PATH, True)
     log.info("Dashboard updated.")
     log.info("Morning run complete.")
 
