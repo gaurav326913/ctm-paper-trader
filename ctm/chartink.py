@@ -1,4 +1,4 @@
-"""chartink.py — scrapes all 9 scan results from Chartink's internal API."""
+"""chartink.py — scrapes all scan results from Chartink's internal API."""
 
 import os, time, logging, requests
 from bs4 import BeautifulSoup
@@ -8,10 +8,20 @@ log = logging.getLogger("ctm.chartink")
 EMAIL    = os.environ.get("CHARTINK_EMAIL", "")
 PASSWORD = os.environ.get("CHARTINK_PASSWORD", "")
 
+# Base headers — browser-like
 H = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Accept": "application/json, text/javascript, */*; q=0.01",
     "X-Requested-With": "XMLHttpRequest",
+}
+
+# Headers for the login POST — must look like a real browser form submission
+H_LOGIN = {
+    "User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Accept":       "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Origin":       "https://chartink.com",
+    "Referer":      "https://chartink.com/login",
 }
 
 SCANS = {
@@ -29,29 +39,67 @@ SCANS = {
 def fetch_all() -> dict:
     results = {}
     with requests.Session() as sess:
-        r    = sess.get("https://chartink.com/screener/", headers=H, timeout=30)
-        meta = BeautifulSoup(r.content, "html.parser").find("meta", {"name": "csrf-token"})
+
+        # ── Step 1: Load the LOGIN page and grab its CSRF token ──────────────
+        # Important: CSRF token must come from the login page, not the screener
+        r_login_page = sess.get("https://chartink.com/login", headers=H, timeout=30)
+        meta = BeautifulSoup(r_login_page.content, "html.parser").find("meta", {"name": "csrf-token"})
         if not meta:
-            log.error("Chartink CSRF not found")
+            log.error("Chartink CSRF not found on login page")
             return {}
         csrf = meta["content"]
+        log.info("Chartink CSRF token fetched OK")
+
+        # ── Step 2: Login if credentials provided ────────────────────────────
         if EMAIL:
-            login_resp = sess.post("https://chartink.com/login",
-                      data={"_token": csrf, "email": EMAIL, "password": PASSWORD},
-                      headers={**H, "Referer": "https://chartink.com/login"}, timeout=30)
-            log.info("Chartink login status: %d", login_resp.status_code)  # ADD THIS
-            m2_resp = sess.get("https://chartink.com/screener/", headers=H, timeout=30)
-            logged_in = "logout" in m2_resp.text.lower()                   # ADD THIS
-            log.info("Chartink logged in: %s", logged_in)                  # ADD THIS
-            m2 = BeautifulSoup(m2_resp.content, "html.parser").find("meta", {"name": "csrf-token"})
-            if m2: csrf = m2["content"]
+            time.sleep(2)   # brief pause — avoid triggering bot detection
+            login_resp = sess.post(
+                "https://chartink.com/login",
+                data={"_token": csrf, "email": EMAIL, "password": PASSWORD},
+                headers=H_LOGIN,
+                timeout=30,
+                allow_redirects=True,
+            )
+            log.info("Chartink login status: %d", login_resp.status_code)
+
+            # Verify login succeeded by checking for logout link in page HTML
+            logged_in = "logout" in login_resp.text.lower()
+            log.info("Chartink logged in: %s", logged_in)
+
+            if not logged_in:
+                log.warning("Chartink login failed — scans will run as guest (limited results)")
+
+            # ── Step 3: Re-fetch screener page to get fresh post-login CSRF ──
+            time.sleep(1)
+            r_screener = sess.get("https://chartink.com/screener/", headers=H, timeout=30)
+            m2 = BeautifulSoup(r_screener.content, "html.parser").find("meta", {"name": "csrf-token"})
+            if m2:
+                csrf = m2["content"]
+                log.info("Post-login CSRF refreshed OK")
+            else:
+                log.warning("Could not refresh post-login CSRF — using original token")
+        else:
+            log.warning("No Chartink credentials set — running as guest")
+            # Still need screener CSRF for scan POSTs
+            r_screener = sess.get("https://chartink.com/screener/", headers=H, timeout=30)
+            m2 = BeautifulSoup(r_screener.content, "html.parser").find("meta", {"name": "csrf-token"})
+            if m2:
+                csrf = m2["content"]
+
+        # ── Step 4: Run each scan ─────────────────────────────────────────────
         for sid, cfg in SCANS.items():
             try:
-                d = sess.post("https://chartink.com/screener/process",
-                              data={"scan_clause": cfg["scan_clause"]},
-                              headers={**H, "x-csrf-token": csrf,
-                                       "Referer": "https://chartink.com/screener/"},
-                              timeout=60).json()
+                resp = sess.post(
+                    "https://chartink.com/screener/process",
+                    data={"scan_clause": cfg["scan_clause"]},
+                    headers={
+                        **H,
+                        "x-csrf-token": csrf,
+                        "Referer": "https://chartink.com/screener/",
+                    },
+                    timeout=60,
+                )
+                d    = resp.json()
                 syms = [x["nsecode"].strip().upper() for x in d.get("data", []) if x.get("nsecode")]
                 results[sid] = syms
                 log.info("  %-18s -> %d stocks", cfg["label"], len(syms))
@@ -59,4 +107,5 @@ def fetch_all() -> dict:
             except Exception as e:
                 log.error("Scan %s failed: %s", sid, e)
                 results[sid] = []
+
     return results
