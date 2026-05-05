@@ -183,9 +183,10 @@ def _get_nifty_current() -> float | None:
 def _get_nifty_200dma() -> float | None:
     """
     Fetch Nifty 50 historical closes and compute 200 DMA.
-    Tries two endpoints — NSE blocks GitHub Actions IPs intermittently.
-    Returns None if both fail.
+    Primary: NSE historical endpoint
+    Fallback: yfinance (works from any IP including GitHub Actions)
     """
+    # Try NSE first
     endpoints = [
         ("https://www.nseindia.com/api/historical/indicesHistory"
          "?indexType=NIFTY%2050&duration=250"),
@@ -200,14 +201,25 @@ def _get_nifty_200dma() -> float | None:
                 continue
             hist = body.get("data", {}).get("indexCloseOnlineRecords", [])
             if len(hist) < 200:
-                log.warning("Only %d days of Nifty history returned", len(hist))
                 continue
             closes   = sorted(hist, key=lambda x: x.get("EOD_TIMESTAMP", ""))
             last_200 = [float(x["EOD_CLOSE_INDEX_VAL"]) for x in closes[-200:]]
             return round(statistics.mean(last_200), 2)
         except Exception as e:
-            log.warning("Nifty history endpoint failed (%s): %s", url, e)
+            log.warning("Nifty NSE history failed (%s): %s", url, e)
             time.sleep(2)
+
+    # Fallback: yfinance
+    log.info("Trying yfinance for Nifty 200 DMA...")
+    try:
+        import yfinance as yf
+        df = yf.download("^NSEI", period="300d", interval="1d", progress=False)
+        if df is not None and len(df) >= 200:
+            closes = df["Close"].dropna().tolist()
+            return round(statistics.mean(closes[-200:]), 2)
+        log.warning("yfinance returned insufficient data (%d rows)", len(df) if df is not None else 0)
+    except Exception as e:
+        log.warning("yfinance Nifty 200 DMA failed: %s", e)
 
     return None
 
