@@ -36,11 +36,14 @@ def fetch_all() -> dict:
             return {}
         csrf = meta["content"]
         if EMAIL:
-            sess.post("https://chartink.com/login",
+            login_resp = sess.post("https://chartink.com/login",
                       data={"_token": csrf, "email": EMAIL, "password": PASSWORD},
                       headers={**H, "Referer": "https://chartink.com/login"}, timeout=30)
-            m2 = BeautifulSoup(sess.get("https://chartink.com/screener/", headers=H, timeout=30).content,
-                               "html.parser").find("meta", {"name": "csrf-token"})
+            log.info("Chartink login status: %d", login_resp.status_code)  # ADD THIS
+            m2_resp = sess.get("https://chartink.com/screener/", headers=H, timeout=30)
+            logged_in = "logout" in m2_resp.text.lower()                   # ADD THIS
+            log.info("Chartink logged in: %s", logged_in)                  # ADD THIS
+            m2 = BeautifulSoup(m2_resp.content, "html.parser").find("meta", {"name": "csrf-token"})
             if m2: csrf = m2["content"]
         for sid, cfg in SCANS.items():
             try:
