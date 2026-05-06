@@ -43,7 +43,7 @@
 
 <div class="header">
   <h1>CTM Paper Trader</h1>
-  <div class="updated">Last updated: 05 May 2026, 14:35 IST</div>
+  <div class="updated">Last updated: 06 May 2026, 14:07 IST</div>
 </div>
 
 <div class="container">
@@ -73,7 +73,7 @@
   </div>
 
   <!-- Tabs -->
-  <div style="background:#EF444420;border:1px solid #EF4444;color:#EF4444;padding:10px 16px;border-radius:8px;font-size:13px;margin-bottom:16px">Market caution — Nifty 50 below 200 DMA. No new entries until market recovers.</div><div class="tabs">
+  <div style="background:#10B98120;border:1px solid #10B981;color:#10B981;padding:10px 16px;border-radius:8px;font-size:13px;margin-bottom:16px">Market healthy — Nifty 50 above 200 DMA. New entries enabled.</div><div class="tabs">
     <button class="tab active" onclick="showTab('open')">Open Positions (0)</button>
     <button class="tab" onclick="showTab('closed')">Trade History (0)</button>
     <button class="tab" onclick="showTab('scans')">Today's Scans</button>
@@ -119,8 +119,8 @@
           <td style="font-size:12px;color:#6B7280"></td>
         </tr><tr class="trow">
           <td><span style="background:#EC489922;color:#EC4899;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600">Big Movers</span></td>
-          <td><b>76</b></td>
-          <td style="font-size:12px;color:#6B7280">POWERINDIA, APARINDS, MTARTECH, GVT&D, DATAPATTNS, THANGAMAYL, INDOTECH, SANSERA, CPPLUS, KMEW, AXISCADES, LLOYDSME...</td>
+          <td><b>79</b></td>
+          <td style="font-size:12px;color:#6B7280">POWERINDIA, APARINDS, MTARTECH, GRWRHITECH, GVT&D, DATAPATTNS, THANGAMAYL, E2E, ACUTAAS, INDOTECH, CPPLUS, KMEW...</td>
         </tr><tr class="trow">
           <td><span style="background:#14B8A622;color:#14B8A6;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600">India Strong</span></td>
           <td><b>0</b></td>
@@ -153,8 +153,8 @@ const chartDefaults = {
 };
 
 // Equity curve
-const eLabels = ["2026-05-03", "2026-05-04", "2026-05-05"];
-const eValues = [0, 0, 0];
+const eLabels = ["2026-05-03", "2026-05-04", "2026-05-05", "2026-05-06"];
+const eValues = [0, 0, 0, 0];
 if (eLabels.length > 0) {
   new Chart(document.getElementById('equityChart'), {
     type: 'line',
