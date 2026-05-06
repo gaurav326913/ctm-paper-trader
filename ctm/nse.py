@@ -7,14 +7,13 @@ Fetches from NSE's public endpoints:
 
 No API key needed.
 
-Fixes vs original:
-  - is_market_healthy() now tries multiple endpoints for 200 DMA
-  - Falls back to checking Nifty vs its 52-week range as a proxy if all historical endpoints fail
-  - Session init retries on failure
-  - Explicit response content-type check before .json() to avoid cryptic parse errors
+200 DMA fetch strategy:
+  1. NSE historical endpoint (primary)
+  2. Stooq CSV (fallback — no rate limits, works from GitHub Actions)
+  3. 52-week midpoint proxy (last resort)
 """
 
-import logging, time, statistics
+import logging, time, statistics, csv, io
 import requests
 
 log = logging.getLogger("ctm.nse")
@@ -118,14 +117,13 @@ def get_atr(symbol: str, period: int = 14) -> float | None:
     """
     _init()
     try:
-        url = (f"https://www.nseindia.com/api/historical/cm/equity"
-               f"?symbol={symbol}&series=[%22EQ%22]&duration=60")
+        url  = (f"https://www.nseindia.com/api/historical/cm/equity"
+                f"?symbol={symbol}&series=[%22EQ%22]&duration=60")
         r    = _sess.get(url, timeout=20)
         data = (_safe_json(r) or {}).get("data", [])
         if len(data) < period + 1:
             return None
 
-        # Sort ascending by date
         data = sorted(data, key=lambda x: x.get("CH_TIMESTAMP", ""))
 
         true_ranges = []
@@ -162,7 +160,7 @@ def get_atrs(symbols: list, period: int = 14) -> dict:
         atr = get_atr(sym, period)
         if atr:
             result[sym] = atr
-        time.sleep(0.4)   # be polite to NSE
+        time.sleep(0.4)
     log.info("ATRs fetched: %d / %d", len(result), len(symbols))
     return result
 
@@ -180,13 +178,8 @@ def _get_nifty_current() -> float | None:
     return None
 
 
-def _get_nifty_200dma() -> float | None:
-    """
-    Fetch Nifty 50 historical closes and compute 200 DMA.
-    Primary: NSE historical endpoint
-    Fallback: yfinance (works from any IP including GitHub Actions)
-    """
-    # Try NSE first
+def _get_nifty_200dma_from_nse() -> float | None:
+    """Try NSE historical endpoint for Nifty 200 DMA."""
     endpoints = [
         ("https://www.nseindia.com/api/historical/indicesHistory"
          "?indexType=NIFTY%2050&duration=250"),
@@ -201,33 +194,55 @@ def _get_nifty_200dma() -> float | None:
                 continue
             hist = body.get("data", {}).get("indexCloseOnlineRecords", [])
             if len(hist) < 200:
+                log.warning("Only %d days of Nifty history from NSE", len(hist))
                 continue
             closes   = sorted(hist, key=lambda x: x.get("EOD_TIMESTAMP", ""))
             last_200 = [float(x["EOD_CLOSE_INDEX_VAL"]) for x in closes[-200:]]
             return round(statistics.mean(last_200), 2)
         except Exception as e:
-            log.warning("Nifty NSE history failed (%s): %s", url, e)
+            log.warning("NSE history endpoint failed: %s", e)
             time.sleep(2)
-
-    # Fallback: yfinance
-    log.info("Trying yfinance for Nifty 200 DMA...")
-    try:
-        import yfinance as yf
-        df = yf.download("^NSEI", period="300d", interval="1d", progress=False)
-        if df is not None and len(df) >= 200:
-            closes = df["Close"].dropna().tolist()
-            return round(statistics.mean(closes[-200:]), 2)
-        log.warning("yfinance returned insufficient data (%d rows)", len(df) if df is not None else 0)
-    except Exception as e:
-        log.warning("yfinance Nifty 200 DMA failed: %s", e)
-
     return None
+
+
+def _get_nifty_200dma_from_stooq() -> float | None:
+    """
+    Fallback: fetch Nifty 50 closes from Stooq CSV API.
+    Stooq is free, no auth, no rate limits — works reliably from GitHub Actions.
+    """
+    try:
+        url = "https://stooq.com/q/d/l/?s=%5Ensei&i=d"
+        r   = requests.get(url, timeout=20,
+                           headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code != 200:
+            log.warning("Stooq returned HTTP %d", r.status_code)
+            return None
+
+        reader = csv.DictReader(io.StringIO(r.text))
+        closes = []
+        for row in reader:
+            try:
+                closes.append(float(row["Close"]))
+            except (KeyError, ValueError):
+                continue
+
+        if len(closes) < 200:
+            log.warning("Stooq returned only %d rows", len(closes))
+            return None
+
+        sma200 = round(statistics.mean(closes[-200:]), 2)
+        log.info("Stooq: Nifty 200 DMA = %.2f (from %d days)", sma200, len(closes))
+        return sma200
+
+    except Exception as e:
+        log.warning("Stooq Nifty 200 DMA failed: %s", e)
+        return None
 
 
 def _nifty_above_52w_midpoint(current: float) -> bool:
     """
-    Fallback health proxy: is Nifty above the midpoint of its 52-week range?
-    If yes, treat as healthy. Used only when 200 DMA fetch fails.
+    Last-resort health proxy: is Nifty above the midpoint of its 52-week range?
+    Used only when all DMA data sources fail.
     """
     try:
         r    = _sess.get("https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%2050", timeout=15)
@@ -239,24 +254,24 @@ def _nifty_above_52w_midpoint(current: float) -> bool:
         low52  = float(str(row.get("yearLow",  0)).replace(",", ""))
         if high52 and low52:
             midpoint = (high52 + low52) / 2
-            log.info("Nifty 52w range fallback: %.2f–%.2f  midpoint=%.2f  current=%.2f — %s",
+            log.info("Nifty 52w fallback: %.2f–%.2f  midpoint=%.2f  current=%.2f — %s",
                      low52, high52, midpoint, current,
                      "ABOVE MID (proxy healthy)" if current > midpoint else "BELOW MID (proxy unhealthy)")
             return current > midpoint
     except Exception as e:
         log.warning("52-week fallback also failed: %s", e)
-    return True   # final failsafe — don't block trades on data errors
+    return True
 
 
 def is_market_healthy() -> bool:
     """
     Returns True if Nifty 50 is above its 200-day SMA.
 
-    Strategy:
-      1. Fetch current Nifty level
-      2. Try to compute 200 DMA from historical endpoint
-      3. If historical fetch fails, fall back to 52-week midpoint as proxy
-      4. If everything fails, return True (don't block trades on data errors)
+    Fetch strategy (in order):
+      1. NSE historical endpoint
+      2. Stooq CSV (reliable from GitHub Actions, no rate limits)
+      3. 52-week midpoint proxy
+      4. Final failsafe: True (don't block trades on data errors)
     """
     _init()
 
@@ -265,14 +280,21 @@ def is_market_healthy() -> bool:
         log.warning("Could not fetch Nifty current price — assuming healthy")
         return True
 
-    sma200 = _get_nifty_200dma()
+    # Try NSE first
+    sma200 = _get_nifty_200dma_from_nse()
+
+    # Fallback to Stooq
+    if not sma200:
+        log.info("NSE history unavailable — trying Stooq...")
+        sma200 = _get_nifty_200dma_from_stooq()
 
     if sma200:
         healthy = current > sma200
         log.info("Nifty health: %.2f vs 200 DMA %.2f — %s",
-                 current, sma200, "HEALTHY ✓" if healthy else "UNHEALTHY ✗ — Tier 2 entries blocked")
+                 current, sma200,
+                 "HEALTHY ✓" if healthy else "UNHEALTHY ✗ — Tier 2 entries blocked")
         return healthy
 
-    # Historical endpoint failed — use 52-week midpoint as proxy
-    log.warning("200 DMA unavailable — using 52-week midpoint as health proxy")
+    # Last resort: 52-week midpoint
+    log.warning("200 DMA unavailable from all sources — using 52-week midpoint proxy")
     return _nifty_above_52w_midpoint(current)
