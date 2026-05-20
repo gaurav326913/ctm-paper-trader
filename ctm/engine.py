@@ -18,11 +18,11 @@ FB_SL_PCT  = 5.0    # fallback SL % if ATR unavailable
 FB_TGT_PCT = 10.0   # fallback target % if ATR unavailable
 
 
-# ── Swing trading scan qualification rules ────────────────────────────────────
+# â”€â”€ Swing trading scan qualification rules â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #
 # Tier 1: queue regardless of Nifty health (high conviction setups)
 TIER1_COMBOS = [
-    {"champion-w"},                   # weekly trend intact — strongest signal
+    {"champion-w"},                   # weekly trend intact â€” strongest signal
     {"champion-d", "contraction"},    # trending + coiling = classic swing entry
     {"champion-d", "bigmover"},       # trend confirmed by 6-month breakout
     {"champion-d", "indstrong"},      # quality large-cap in uptrend
@@ -36,10 +36,10 @@ TIER2_COMBOS = [
 ]
 
 # Excluded from entry qualification:
-#   bigmover alone  — noise, not signal
-#   indstrong alone — quality filter, not a trigger
-#   npc             — repurposed as exit alert on open positions
-#   newstock        — IPOs lack ATR history
+#   bigmover alone  â€” noise, not signal
+#   indstrong alone â€” quality filter, not a trigger
+#   npc             â€” repurposed as exit alert on open positions
+#   newstock        â€” IPOs lack ATR history
 
 
 def _qualifies(scans_set: set, market_healthy: bool) -> bool:
@@ -52,6 +52,25 @@ def _qualifies(scans_set: set, market_healthy: bool) -> bool:
             if combo.issubset(scans_set):
                 return True
     return False
+
+
+def qualified_candidates(data: dict, scan_results: dict, market_healthy: bool) -> dict:
+    """Return symbol -> scan ids for candidates that pass entry rules."""
+    already_open    = {p["symbol"] for p in data["positions"] if p["status"] == "open"}
+    already_pending = {p["symbol"] for p in data.get("pending", [])}
+
+    seen: dict = {}
+    for sid, syms in scan_results.items():
+        for sym in syms:
+            seen.setdefault(sym, set()).add(sid)
+
+    return {
+        sym: sids for sym, sids in seen.items()
+        if _qualifies(sids, market_healthy)
+        and sym not in already_open
+        and sym not in already_pending
+        and ("npc" not in sids or len(sids) > 1)    # never queue NPC-only stocks
+    }
 
 
 def load(data_file: str) -> dict:
@@ -87,7 +106,7 @@ def _empty() -> dict:
     }
 
 
-# ── Evening job (6 PM): queue candidates ─────────────────────────────────────
+# â”€â”€ Evening job (6 PM): queue candidates â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def queue_candidates(data: dict, scan_results: dict, scan_date: str,
                      market_healthy: bool) -> list:
@@ -97,35 +116,22 @@ def queue_candidates(data: dict, scan_results: dict, scan_date: str,
     Returns list of newly queued symbols.
     """
     s = data["settings"]
-    already_open    = {p["symbol"] for p in data["positions"] if p["status"] == "open"}
-    already_pending = {p["symbol"] for p in data.get("pending", [])}
-
-    # Build symbol -> set of scan ids
-    seen: dict = {}
-    for sid, syms in scan_results.items():
-        for sym in syms:
-            seen.setdefault(sym, set()).add(sid)
+    already_open = {p["symbol"] for p in data["positions"] if p["status"] == "open"}
 
     # NPC: repurpose as exit alert on open positions (not an entry signal)
     npc_syms = set(scan_results.get("npc", []))
     npc_open = npc_syms & already_open
     if npc_open:
-        log.warning("NPC alert (high-volume down day) on open positions — review exits: %s",
+        log.warning("NPC alert (high-volume down day) on open positions â€” review exits: %s",
                     ", ".join(sorted(npc_open)))
 
     # Qualify candidates using swing trading rules
-    qualified = {
-        sym: sids for sym, sids in seen.items()
-        if _qualifies(sids, market_healthy)
-        and sym not in already_open
-        and sym not in already_pending
-        and "npc" not in sids or len(sids) > 1    # never queue NPC-only stocks
-    }
+    qualified = qualified_candidates(data, scan_results, market_healthy)
 
     if not market_healthy:
-        log.info("Market unhealthy (Nifty below 200 DMA) — only Tier 1 setups qualify.")
+        log.info("Market unhealthy (Nifty below 200 DMA) â€” only Tier 1 setups qualify.")
 
-    log.info("Candidates qualified: %d stocks — %s",
+    log.info("Candidates qualified: %d stocks â€” %s",
              len(qualified),
              ", ".join(
                  f"{sym}({','.join(sorted(sids))})"
@@ -137,7 +143,7 @@ def queue_candidates(data: dict, scan_results: dict, scan_date: str,
     for sym, sids in qualified.items():
         n_open = sum(1 for p in data["positions"] if p["status"] == "open")
         if n_open + len(data.get("pending", [])) >= s["maxPos"]:
-            log.info("Position limit reached (%d) — not queuing more.", s["maxPos"])
+            log.info("Position limit reached (%d) â€” not queuing more.", s["maxPos"])
             break
         entry = {
             "symbol":   sym,
@@ -152,7 +158,7 @@ def queue_candidates(data: dict, scan_results: dict, scan_date: str,
     return queued
 
 
-# ── Morning job (9:20 AM): enter pending at open price ───────────────────────
+# â”€â”€ Morning job (9:20 AM): enter pending at open price â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
     """
@@ -173,7 +179,7 @@ def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
         sym = item["symbol"]
         px  = open_prices.get(sym)
         if not px:
-            log.warning("No open price for %s — keeping in queue for tomorrow.", sym)
+            log.warning("No open price for %s â€” keeping in queue for tomorrow.", sym)
             still_pending.append(item)
             continue
 
@@ -188,16 +194,16 @@ def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
             # Fallback to fixed % if ATR unavailable
             sl  = round(px * (1 - FB_SL_PCT  / 100), 2)
             tgt = round(px * (1 + FB_TGT_PCT / 100), 2)
-            log.warning("  No ATR for %s — using fixed SL/TGT", sym)
+            log.warning("  No ATR for %s â€” using fixed SL/TGT", sym)
 
         # Safety: SL must be below entry, TGT above
         if sl >= px or tgt <= px:
-            log.warning("  Invalid SL/TGT for %s — skipping", sym)
+            log.warning("  Invalid SL/TGT for %s â€” skipping", sym)
             continue
 
         qty = int(s["posSize"] / px)
         if qty < 1:
-            log.warning("  Position size too small for %s at Rs%.2f — skipping", sym, px)
+            log.warning("  Position size too small for %s at Rs%.2f â€” skipping", sym, px)
             continue
 
         trade = {
@@ -230,7 +236,7 @@ def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
     return entered
 
 
-# ── Evening job: update current prices on open positions ─────────────────────
+# â”€â”€ Evening job: update current prices on open positions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def update_prices(data: dict, prices: dict):
     """Update currentPrice on all open positions."""
@@ -242,7 +248,7 @@ def update_prices(data: dict, prices: dict):
             p["currentPrice"] = round(px, 2)
 
 
-# ── Check SL / Target exits ───────────────────────────────────────────────────
+# â”€â”€ Check SL / Target exits â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def check_exits(data: dict, prices: dict) -> list:
     closed = []
@@ -270,7 +276,7 @@ def check_exits(data: dict, prices: dict) -> list:
     return closed
 
 
-# ── Equity curve ──────────────────────────────────────────────────────────────
+# â”€â”€ Equity curve â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def update_equity_curve(data: dict):
     closed = [p for p in data["positions"] if p["status"] == "closed"]
