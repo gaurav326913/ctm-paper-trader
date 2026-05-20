@@ -4,7 +4,7 @@ Generates a self-contained HTML dashboard from trades.json.
 Written to docs/index.html which GitHub Pages serves automatically.
 """
 
-import json, os, datetime
+import json, os, datetime, html as html_lib
 
 SCANS_META = {
     "champion-d":  {"label": "Champion Daily",   "color": "#3B82F6"},
@@ -37,13 +37,12 @@ def generate(data: dict, scan_results: dict) -> str:
     total_invested = sum(p["invested"] for p in op)
     today  = datetime.date.today().strftime("%d %b %Y")
     updated = datetime.datetime.now().strftime("%d %b %Y, %H:%M IST")
+    last_run = data.get("last_run", {})
 
-    # ── Equity curve data ──────────────────────────────────────────────────────
     curve = data.get("equity_curve", [])
     curve_labels = json.dumps([c["date"] for c in curve])
     curve_values = json.dumps([c["pnl"]  for c in curve])
 
-    # ── Scan performance data ──────────────────────────────────────────────────
     scan_stats = {}
     for sid in SCANS_META:
         trades = [p for p in cl if sid in p.get("scans", [])]
@@ -59,7 +58,46 @@ def generate(data: dict, scan_results: dict) -> str:
     scan_perf_avg    = json.dumps([scan_stats[s]["avgPnl"] for s in SCANS_META])
     scan_perf_colors = json.dumps([SCANS_META[s]["color"] for s in SCANS_META])
 
-    # ── Open positions rows ────────────────────────────────────────────────────
+    last_run_html = ""
+    if last_run:
+        mode = str(last_run.get("mode", "run")).title()
+        ran_at = str(last_run.get("ranAt", "Unknown"))
+        reason = html_lib.escape(str(last_run.get("blockedReason", "No run details available.")))
+
+        if last_run.get("mode") == "evening":
+            market = "Healthy" if last_run.get("marketHealthy") else "Caution"
+            summary_items = [
+                ("Mode", mode),
+                ("Run time", ran_at),
+                ("Market", market),
+                ("Scan hits", last_run.get("scanHits", 0)),
+                ("Unique symbols", last_run.get("uniqueSymbols", 0)),
+                ("Qualified", last_run.get("candidatesQualified", 0)),
+                ("Queued", last_run.get("queued", 0)),
+            ]
+        else:
+            summary_items = [
+                ("Mode", mode),
+                ("Run time", ran_at),
+                ("Pending before", last_run.get("pendingBefore", 0)),
+                ("Entered", last_run.get("entered", 0)),
+            ]
+
+        summary_cells = "".join(
+            f'<div class="run-stat"><div class="run-label">{html_lib.escape(str(label))}</div>'
+            f'<div class="run-value">{html_lib.escape(str(value))}</div></div>'
+            for label, value in summary_items
+        )
+        last_run_html = f"""
+  <div class="run-summary">
+    <div class="run-head">
+      <div class="card-title">Last Run Summary</div>
+      <div class="run-reason">{reason}</div>
+    </div>
+    <div class="run-grid">{summary_cells}</div>
+  </div>
+"""
+
     def scan_badge(sid):
         m = SCANS_META.get(sid, {"label": sid, "color": "#6B7280"})
         return (f'<span style="background:{m["color"]}22;color:{m["color"]};'
@@ -85,24 +123,22 @@ def generate(data: dict, scan_results: dict) -> str:
           <td>{p["entryDate"]}</td>
         </tr>"""
 
-    # ── Closed trades rows (last 30) ───────────────────────────────────────────
     cl_rows = ""
-    for p in sorted(cl, key=lambda x: x.get("exitDate",""), reverse=True)[:30]:
+    for p in sorted(cl, key=lambda x: x.get("exitDate", ""), reverse=True)[:30]:
         cl_rows += f"""<tr class="trow">
           <td><b>{p["symbol"]}</b></td>
           <td>{"".join(scan_badge(s) for s in p["scans"])}</td>
           <td>{p["entryDate"]}</td>
-          <td>{p.get("exitDate","")}</td>
+          <td>{p.get("exitDate", "")}</td>
           <td>Rs{p["entryPrice"]:,.2f}</td>
-          <td>Rs{p.get("exitPrice",0):,.2f}</td>
+          <td>Rs{p.get("exitPrice", 0):,.2f}</td>
           <td style="color:{_clr(p.get('pnl',0))}"><b>Rs{p.get('pnl',0):+,.0f}</b></td>
           <td style="color:{_clr(p.get('pnlPct',0))}"><b>{p.get('pnlPct',0):+.2f}%</b></td>
           <td><span style="background:{'#FEF3C7' if 'Target' in p.get('exitReason','') else '#FEE2E2'};
                color:{'#92400E' if 'Target' in p.get('exitReason','') else '#991B1B'};
-               padding:2px 8px;border-radius:4px;font-size:11px">{p.get("exitReason","")}</span></td>
+               padding:2px 8px;border-radius:4px;font-size:11px">{p.get("exitReason", "")}</span></td>
         </tr>"""
 
-    # ── Today's scan results ───────────────────────────────────────────────────
     scan_rows = ""
     for sid, cfg in SCANS_META.items():
         syms = scan_results.get(sid, [])
@@ -132,6 +168,13 @@ def generate(data: dict, scan_results: dict) -> str:
   .metric-value{{font-size:24px;font-weight:700;color:#F1F5F9}}
   .metric-value.pos{{color:#10B981}}
   .metric-value.neg{{color:#EF4444}}
+  .run-summary{{background:#1E293B;border:1px solid #334155;border-radius:12px;padding:18px 20px;margin-bottom:24px}}
+  .run-head{{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap;margin-bottom:14px}}
+  .run-reason{{font-size:13px;color:#CBD5E1;max-width:720px;line-height:1.45}}
+  .run-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}}
+  .run-stat{{background:#0F172A;border:1px solid #334155;border-radius:8px;padding:10px 12px;min-height:64px}}
+  .run-label{{font-size:10px;color:#64748B;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}}
+  .run-value{{font-size:16px;font-weight:700;color:#F8FAFC;word-break:break-word}}
   .charts{{display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:24px}}
   .card{{background:#1E293B;border:1px solid #334155;border-radius:12px;padding:20px}}
   .card-title{{font-size:13px;font-weight:600;color:#94A3B8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px}}
@@ -162,7 +205,6 @@ def generate(data: dict, scan_results: dict) -> str:
 
 <div class="container">
 
-  <!-- Metrics -->
   <div class="metrics">
     <div class="metric"><div class="metric-label">Total Trades</div><div class="metric-value">{len(cl)+len(op)}</div></div>
     <div class="metric"><div class="metric-label">Open Positions</div><div class="metric-value">{len(op)}</div></div>
@@ -174,43 +216,22 @@ def generate(data: dict, scan_results: dict) -> str:
     <div class="metric"><div class="metric-label">Avg Loss</div><div class="metric-value neg">{al:.1f}%</div></div>
   </div>
 
-  <!-- Charts -->
+  {last_run_html}
+
   <div class="charts">
-    <div class="card">
-      <div class="card-title">Equity Curve (Realized P&L)</div>
-      <canvas id="equityChart" height="120"></canvas>
-    </div>
-    <div class="card">
-      <div class="card-title">Win Rate by Scan</div>
-      <canvas id="scanChart" height="120"></canvas>
-    </div>
+    <div class="card"><div class="card-title">Equity Curve (Realized P&L)</div><canvas id="equityChart" height="120"></canvas></div>
+    <div class="card"><div class="card-title">Win Rate by Scan</div><canvas id="scanChart" height="120"></canvas></div>
   </div>
 
-  <!-- Tabs -->
   <div class="tabs">
     <button class="tab active" onclick="showTab('open')">Open Positions ({len(op)})</button>
     <button class="tab" onclick="showTab('closed')">Trade History ({len(cl)})</button>
     <button class="tab" onclick="showTab('scans')">Today's Scans</button>
   </div>
 
-  <div id="tab-open" class="tab-content active">
-    <div class="table-wrap">
-      {'<table><thead><tr><th>Symbol</th><th>Scans</th><th>Entry</th><th>Current</th><th>Unrealized</th><th>Stop Loss</th><th>Target</th><th>Since</th></tr></thead><tbody>' + op_rows + '</tbody></table>' if op else '<div class="empty">No open positions yet.</div>'}
-    </div>
-  </div>
-
-  <div id="tab-closed" class="tab-content">
-    <div class="table-wrap">
-      {'<table><thead><tr><th>Symbol</th><th>Scans</th><th>Entry Date</th><th>Exit Date</th><th>Entry Rs</th><th>Exit Rs</th><th>P&L Rs</th><th>P&L %</th><th>Reason</th></tr></thead><tbody>' + cl_rows + '</tbody></table>' if cl else '<div class="empty">No closed trades yet.</div>'}
-    </div>
-  </div>
-
-  <div id="tab-scans" class="tab-content">
-    <div class="table-wrap">
-      <table><thead><tr><th>Scan</th><th>Stocks Found</th><th>Symbols</th></tr></thead>
-      <tbody>{scan_rows}</tbody></table>
-    </div>
-  </div>
+  <div id="tab-open" class="tab-content active"><div class="table-wrap">{'<table><thead><tr><th>Symbol</th><th>Scans</th><th>Entry</th><th>Current</th><th>Unrealized</th><th>Stop Loss</th><th>Target</th><th>Since</th></tr></thead><tbody>' + op_rows + '</tbody></table>' if op else '<div class="empty">No open positions yet.</div>'}</div></div>
+  <div id="tab-closed" class="tab-content"><div class="table-wrap">{'<table><thead><tr><th>Symbol</th><th>Scans</th><th>Entry Date</th><th>Exit Date</th><th>Entry Rs</th><th>Exit Rs</th><th>P&L Rs</th><th>P&L %</th><th>Reason</th></tr></thead><tbody>' + cl_rows + '</tbody></table>' if cl else '<div class="empty">No closed trades yet.</div>'}</div></div>
+  <div id="tab-scans" class="tab-content"><div class="table-wrap"><table><thead><tr><th>Scan</th><th>Stocks Found</th><th>Symbols</th></tr></thead><tbody>{scan_rows}</tbody></table></div></div>
 
 </div>
 
@@ -231,43 +252,27 @@ const chartDefaults = {{
   }}
 }};
 
-// Equity curve
 const eLabels = {curve_labels};
 const eValues = {curve_values};
 if (eLabels.length > 0) {{
   new Chart(document.getElementById('equityChart'), {{
     type: 'line',
-    data: {{
-      labels: eLabels,
-      datasets: [{{
-        data: eValues,
-        borderColor: eValues[eValues.length-1] >= 0 ? '#10B981' : '#EF4444',
-        backgroundColor: eValues[eValues.length-1] >= 0 ? '#10B98120' : '#EF444420',
-        fill: true, tension: 0.3, pointRadius: 3,
-      }}]
-    }},
+    data: {{ labels: eLabels, datasets: [{{ data: eValues, borderColor: eValues[eValues.length-1] >= 0 ? '#10B981' : '#EF4444', backgroundColor: eValues[eValues.length-1] >= 0 ? '#10B98120' : '#EF444420', fill: true, tension: 0.3, pointRadius: 3 }}] }},
     options: {{ ...chartDefaults }}
   }});
 }} else {{
-  document.getElementById('equityChart').parentElement.innerHTML +=
-    '<p style="color:#475569;text-align:center;margin-top:20px">No closed trades yet — equity curve will appear here.</p>';
+  document.getElementById('equityChart').parentElement.innerHTML += '<p style="color:#475569;text-align:center;margin-top:20px">No closed trades yet â€” equity curve will appear here.</p>';
 }}
 
-// Scan win rate
 const sLabels = {scan_perf_labels};
 const sWr     = {scan_perf_wr};
 const sColors = {scan_perf_colors};
 new Chart(document.getElementById('scanChart'), {{
   type: 'bar',
-  data: {{
-    labels: sLabels,
-    datasets: [{{ data: sWr, backgroundColor: sColors.map(c => c + '99'), borderColor: sColors, borderWidth: 1 }}]
-  }},
+  data: {{ labels: sLabels, datasets: [{{ data: sWr, backgroundColor: sColors.map(c => c + '99'), borderColor: sColors, borderWidth: 1 }}] }},
   options: {{
     ...chartDefaults,
-    plugins: {{ legend: {{ display: false }}, tooltip: {{
-      callbacks: {{ label: ctx => ' Win rate: ' + ctx.parsed.y + '%' }}
-    }} }},
+    plugins: {{ legend: {{ display: false }}, tooltip: {{ callbacks: {{ label: ctx => ' Win rate: ' + ctx.parsed.y + '%' }} }} }},
     scales: {{
       x: {{ ticks: {{ color: '#64748B', font: {{ size: 9 }}, maxRotation: 45 }}, grid: {{ color: '#1E293B' }} }},
       y: {{ min: 0, max: 100, ticks: {{ color: '#64748B', callback: v => v + '%' }}, grid: {{ color: '#334155' }} }}
@@ -299,7 +304,6 @@ def write_v3(data: dict, scan_results: dict, output_path: str, market_healthy: b
     cl      = [p for p in pos if p["status"] == "closed"]
     op      = [p for p in pos if p["status"] == "open"]
 
-    # Build pending rows
     def scan_badge_plain(sid):
         m = SCANS_META.get(sid, {"label": sid, "color": "#6B7280"})
         return (f'<span style="background:{m["color"]}22;color:{m["color"]};'
@@ -327,26 +331,17 @@ def write_v3(data: dict, scan_results: dict, output_path: str, market_healthy: b
         '<div style="text-align:center;padding:32px;color:#475569">No pending trades.</div>'
     )
 
-    # Nifty banner
     if market_healthy:
         banner = ('<div style="background:#10B98120;border:1px solid #10B981;color:#10B981;'
                   'padding:10px 16px;border-radius:8px;font-size:13px;margin-bottom:16px">'
-                  'Market healthy — Nifty 50 above 200 DMA. New entries enabled.</div>')
+                  'Market healthy â€” Nifty 50 above 200 DMA. New entries enabled.</div>')
     else:
         banner = ('<div style="background:#EF444420;border:1px solid #EF4444;color:#EF4444;'
                   'padding:10px 16px;border-radius:8px;font-size:13px;margin-bottom:16px">'
-                  'Market caution — Nifty 50 below 200 DMA. No new entries until market recovers.</div>')
+                  'Market caution â€” Nifty 50 below 200 DMA. No new entries until market recovers.</div>')
 
-    # Generate base HTML
     html = generate(data, scan_results)
-
-    # Inject banner before the tabs
-    html = html.replace(
-        '<div class="tabs">',
-        banner + '<div class="tabs">'
-    )
-
-    # Inject pending tab button and content
+    html = html.replace('<div class="tabs">', banner + '<div class="tabs">')
     html = html.replace(
         "Today's Scans</button>",
         f"Today's Scans</button>\n    <button class=\"tab\" onclick=\"showTab('pending')\">Pending Entry ({len(pend)})</button>"
