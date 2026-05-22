@@ -76,10 +76,10 @@
   },
   "last_run": {
     "mode": "evening",
-    "ranAt": "22 May 2026, 12:34 IST",
+    "ranAt": "22 May 2026, 21:08 IST",
     "marketHealthy": false,
-    "scanHits": 96,
-    "uniqueSymbols": 96,
+    "scanHits": 97,
+    "uniqueSymbols": 97,
     "candidatesQualified": 0,
     "queued": 0,
     "blockedReason": "Nifty 50 below 200 DMA; Tier 2 entries blocked and no Tier 1 setups qualified."
