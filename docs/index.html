@@ -50,7 +50,7 @@
 
 <div class="header">
   <h1>CTM Paper Trader</h1>
-  <div class="updated">Last updated: 22 May 2026, 15:38 IST</div>
+  <div class="updated">Last updated: 25 May 2026, 08:08 IST</div>
 </div>
 
 <div class="container">
@@ -70,9 +70,9 @@
   <div class="run-summary">
     <div class="run-head">
       <div class="card-title">Last Run Summary</div>
-      <div class="run-reason">Nifty 50 below 200 DMA; Tier 2 entries blocked and no Tier 1 setups qualified.</div>
+      <div class="run-reason">No scan combinations matched the entry rules.</div>
     </div>
-    <div class="run-grid"><div class="run-stat"><div class="run-label">Mode</div><div class="run-value">Evening</div></div><div class="run-stat"><div class="run-label">Run time</div><div class="run-value">22 May 2026, 21:08 IST</div></div><div class="run-stat"><div class="run-label">Market</div><div class="run-value">Caution</div></div><div class="run-stat"><div class="run-label">Scan hits</div><div class="run-value">97</div></div><div class="run-stat"><div class="run-label">Unique symbols</div><div class="run-value">97</div></div><div class="run-stat"><div class="run-label">Qualified</div><div class="run-value">0</div></div><div class="run-stat"><div class="run-label">Queued</div><div class="run-value">0</div></div></div>
+    <div class="run-grid"><div class="run-stat"><div class="run-label">Mode</div><div class="run-value">Evening</div></div><div class="run-stat"><div class="run-label">Run time</div><div class="run-value">25 May 2026, 13:38 IST</div></div><div class="run-stat"><div class="run-label">Market</div><div class="run-value">Healthy</div></div><div class="run-stat"><div class="run-label">Scan hits</div><div class="run-value">108</div></div><div class="run-stat"><div class="run-label">Unique symbols</div><div class="run-value">108</div></div><div class="run-stat"><div class="run-label">Qualified</div><div class="run-value">0</div></div><div class="run-stat"><div class="run-label">Queued</div><div class="run-value">0</div></div></div>
   </div>
 
 
@@ -81,7 +81,7 @@
     <div class="card"><div class="card-title">Win Rate by Scan</div><canvas id="scanChart" height="120"></canvas></div>
   </div>
 
-  <div style="background:#EF444420;border:1px solid #EF4444;color:#EF4444;padding:10px 16px;border-radius:8px;font-size:13px;margin-bottom:16px">Market caution â€” Nifty 50 below 200 DMA. No new entries until market recovers.</div><div class="tabs">
+  <div style="background:#10B98120;border:1px solid #10B981;color:#10B981;padding:10px 16px;border-radius:8px;font-size:13px;margin-bottom:16px">Market healthy â€” Nifty 50 above 200 DMA. New entries enabled.</div><div class="tabs">
     <button class="tab active" onclick="showTab('open')">Open Positions (0)</button>
     <button class="tab" onclick="showTab('closed')">Trade History (0)</button>
     <button class="tab" onclick="showTab('scans')">Today's Scans</button>
@@ -114,8 +114,8 @@
           <td style="font-size:12px;color:#6B7280"></td>
         </tr><tr class="trow">
           <td><span style="background:#EC489922;color:#EC4899;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600">Big Movers</span></td>
-          <td><b>97</b></td>
-          <td style="font-size:12px;color:#6B7280">POWERINDIA, APARINDS, MTARTECH, GRWRHITECH, GVT&D, BSE, DATAPATTNS, E2E, MCX, ACUTAAS, SANSERA, CPPLUS...</td>
+          <td><b>108</b></td>
+          <td style="font-size:12px;color:#6B7280">POWERINDIA, APARINDS, MTARTECH, GRWRHITECH, GVT&D, BSE, DATAPATTNS, E2E, MCX, SANSERA, ACUTAAS, CPPLUS...</td>
         </tr><tr class="trow">
           <td><span style="background:#14B8A622;color:#14B8A6;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600">India Strong</span></td>
           <td><b>0</b></td>
@@ -145,8 +145,8 @@ const chartDefaults = {
   }
 };
 
-const eLabels = ["2026-05-03", "2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07", "2026-05-08", "2026-05-11", "2026-05-12", "2026-05-13", "2026-05-14", "2026-05-15", "2026-05-18", "2026-05-19", "2026-05-20", "2026-05-21", "2026-05-22"];
-const eValues = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+const eLabels = ["2026-05-03", "2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07", "2026-05-08", "2026-05-11", "2026-05-12", "2026-05-13", "2026-05-14", "2026-05-15", "2026-05-18", "2026-05-19", "2026-05-20", "2026-05-21", "2026-05-22", "2026-05-25"];
+const eValues = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 if (eLabels.length > 0) {
   new Chart(document.getElementById('equityChart'), {
     type: 'line',
