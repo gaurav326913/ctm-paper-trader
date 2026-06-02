@@ -89,6 +89,10 @@
     {
       "date": "2026-06-01",
       "pnl": 0
+    },
+    {
+      "date": "2026-06-02",
+      "pnl": 0
     }
   ],
   "settings": {
@@ -100,10 +104,10 @@
   },
   "last_run": {
     "mode": "evening",
-    "ranAt": "01 Jun 2026, 23:56 IST",
+    "ranAt": "02 Jun 2026, 13:47 IST",
     "marketHealthy": true,
-    "scanHits": 107,
-    "uniqueSymbols": 107,
+    "scanHits": 111,
+    "uniqueSymbols": 111,
     "candidatesQualified": 0,
     "queued": 0,
     "blockedReason": "No scan combinations matched the entry rules."
