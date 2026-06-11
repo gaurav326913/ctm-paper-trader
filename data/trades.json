@@ -132,10 +132,10 @@
   },
   "last_run": {
     "mode": "evening",
-    "ranAt": "11 Jun 2026, 13:55 IST",
+    "ranAt": "11 Jun 2026, 22:08 IST",
     "marketHealthy": true,
-    "scanHits": 103,
-    "uniqueSymbols": 103,
+    "scanHits": 105,
+    "uniqueSymbols": 105,
     "candidatesQualified": 0,
     "queued": 0,
     "blockedReason": "No scan combinations matched the entry rules."
