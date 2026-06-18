@@ -1,15 +1,10 @@
 """chartink.py — scrapes all scan results from Chartink's internal API.
 
-TEMPORARY ISOLATION TEST MODE:
-champion-d has been replaced with 4 progressively more complex test
-variants (test-1 through test-4), each run separately and logged, to
-find exactly which clause fragment Chartink's parser rejects with
-scan_error. Once we find the breaking fragment, we'll restore
-champion-d/champion-w properly and remove this test block.
-
-ACTION REQUIRED AFTER THIS TEST: revert chartink.py to the last known
-clean version once we've identified the bug — do not leave this
-test file running in production.
+ROOT CAUSE FOUND: "daily close > 1 day ago daily close" breaks Chartink's
+parser with scan_error. test-1 (857 stocks, no yesterday-compare) worked;
+test-2 (added that exact line) broke immediately. This file tests two
+alternate syntaxes for the same "closed up vs yesterday" condition to
+find one Chartink actually accepts.
 """
 
 import os, time, logging, requests
@@ -35,23 +30,23 @@ H_LOGIN = {
 }
 
 SCANS = {
-    # ── TEST 1: bare minimum — just liquidity + close above 50 DMA ──────────
-    "test-1": {"label": "TEST1 (liquidity+trend)",
+    # ── Baseline that we know works (857 stocks) ─────────────────────────────
+    "test-1": {"label": "TEST1 (known working baseline)",
                "scan_clause": "( {cash} daily sma( daily volume * daily close ,20 ) > 50000000 and daily close > daily sma( daily close ,50 ) )"},
 
-    # ── TEST 2: add close > 1 day ago close ("ago" syntax test) ─────────────
-    "test-2": {"label": "TEST2 (+yesterday compare)",
-               "scan_clause": "( {cash} daily sma( daily volume * daily close ,20 ) > 50000000 and daily close > daily sma( daily close ,50 ) and daily close > 1 day ago daily close )"},
+    # ── FIX ATTEMPT A: drop "daily" on the second operand ───────────────────
+    "fix-a": {"label": "FIXA (drop daily on 2nd operand)",
+              "scan_clause": "( {cash} daily sma( daily volume * daily close ,20 ) > 50000000 and daily close > daily sma( daily close ,50 ) and daily close > 1 day ago close )"},
 
-    # ── TEST 3: add ATR expansion condition ──────────────────────────────────
-    "test-3": {"label": "TEST3 (+ATR expansion)",
-               "scan_clause": "( {cash} daily sma( daily volume * daily close ,20 ) > 50000000 and daily close > daily sma( daily close ,50 ) and daily close > 1 day ago daily close and daily avg true range( 1 ) > 0.4 * daily avg true range( 20 ) )"},
+    # ── FIX ATTEMPT B: wrap the historical term in parentheses ──────────────
+    "fix-b": {"label": "FIXB (parenthesized ago term)",
+              "scan_clause": "( {cash} daily sma( daily volume * daily close ,20 ) > 50000000 and daily close > daily sma( daily close ,50 ) and ( 1 day ago daily close ) < daily close )"},
 
-    # ── TEST 4: add the close-in-range-percentile condition ─────────────────
-    "test-4": {"label": "TEST4 (+range close position)",
-               "scan_clause": "( {cash} daily sma( daily volume * daily close ,20 ) > 50000000 and daily close > daily sma( daily close ,50 ) and daily close > 1 day ago daily close and daily avg true range( 1 ) > 0.4 * daily avg true range( 20 ) and daily close > daily low + ( daily high - daily low ) * 0.30 )"},
+    # ── FIX ATTEMPT C: use latest/current keyword style some scans use ──────
+    "fix-c": {"label": "FIXC (latest close vs ago)",
+              "scan_clause": "( {cash} daily sma( daily volume * daily close ,20 ) > 50000000 and daily close > daily sma( daily close ,50 ) and latest close > 1 day ago close )"},
 
-    # ── Keep the rest of the real scans running normally ────────────────────
+    # ── Real scans continue running normally ─────────────────────────────────
     "contraction": {"label": "Contraction",       "scan_clause": "( {cash} ( daily sma( daily volume * daily close ,100 ) > 100000000 and daily sma( daily volume * daily close ,20 ) > 100000000 ) and not ( daily countstreak( 20 , daily sma( daily close ,20 ) < daily sma( daily close ,50 ) ) >= 20 or daily countstreak( 20 , daily sma( daily close ,50 ) < 1 day ago daily sma( daily close ,50 ) ) >= 20 or daily close < daily sma( daily close ,50 ) - daily avg true range( 50 ) or daily close < daily sma( daily close ,50 ) ) and ( daily close > daily sma( daily close ,100 ) or daily close > daily sma( daily close ,200 ) ) )"},
     "ppc":         {"label": "PPC",               "scan_clause": "( {cash} ( daily sma( daily volume * daily close ,20 ) > 100000000 and daily sma( daily volume * daily close ,100 ) > 100000000 ) and not ( daily countstreak( 20 , daily sma( daily close ,20 ) < daily sma( daily close ,50 ) ) >= 20 or daily countstreak( 20 , daily sma( daily close ,50 ) < 1 day ago daily sma( daily close ,50 ) ) >= 20 or daily close < daily sma( daily close ,50 ) or daily close < daily sma( daily close ,50 ) - daily avg true range( 50 ) ) and ( daily close > daily sma( daily close ,100 ) or daily close > daily sma( daily close ,200 ) ) and ( daily volume > daily sma( daily volume ,5 ) * 1.5 or daily volume > daily sma( daily volume ,20 ) * 1.5 or daily volume > daily sma( daily volume ,100 ) * 1.5 ) and daily close > 1 day ago daily close and ( daily avg true range( 1 ) > daily avg true range( 20 ) * 1.5 or daily avg true range( 1 ) > daily avg true range( 5 ) * 1.5 ) )"},
     "npc":         {"label": "NPC",               "scan_clause": "( {cash} daily close < 1 day ago daily close and daily sma( daily volume * daily close ,20 ) > 100000000 and daily sma( daily volume * daily close ,100 ) > 100000000 and ( daily avg true range( 1 ) > daily avg true range( 20 ) * 1.5 or daily avg true range( 1 ) > daily avg true range( 5 ) * 1.5 ) and ( daily volume > daily sma( daily volume ,5 ) * 1.5 or daily volume > daily sma( daily volume ,20 ) * 1.5 or daily volume > daily sma( daily volume ,100 ) * 1.5 ) and daily sma( daily close ,1 ) < 1 day ago daily sma( daily close ,1 ) )"},
@@ -122,16 +117,16 @@ def fetch_all() -> dict:
                     timeout=60,
                 )
 
-                if sid.startswith("test-"):
+                if sid.startswith("test-") or sid.startswith("fix-"):
                     log.info("=" * 50)
                     log.info("DEBUG %s HTTP status: %d", sid, resp.status_code)
-                    log.info("DEBUG %s raw response: %s", sid, resp.text[:500])
+                    log.info("DEBUG %s raw response: %s", sid, resp.text[:300])
                     log.info("=" * 50)
 
                 d    = resp.json()
                 syms = [x["nsecode"].strip().upper() for x in d.get("data", []) if x.get("nsecode")]
                 results[sid] = syms
-                log.info("  %-22s -> %d stocks", cfg["label"], len(syms))
+                log.info("  %-30s -> %d stocks", cfg["label"], len(syms))
                 time.sleep(1.5)
             except Exception as e:
                 log.error("Scan %s failed: %s", sid, e)
