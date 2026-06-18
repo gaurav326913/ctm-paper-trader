@@ -13,12 +13,6 @@ Evening (6 PM):
 Morning (9:20 AM):
   1. Enter pending trades at today's open price with ATR-based SL/target
   2. Rebuild dashboard
-
-*** TEMPORARY DEBUG OVERRIDE ACTIVE ***
-is_morning_run() is hardcoded to return False so manual test runs always
-execute as EVENING mode (to hit Chartink scans) regardless of actual time.
-REVERT this before relying on the real scheduled cron triggers again —
-search for "TEMP OVERRIDE" below and remove those two lines.
 """
 
 import logging, datetime, os, sys, pytz
@@ -41,8 +35,6 @@ IST = pytz.timezone("Asia/Kolkata")
 
 def is_morning_run() -> bool:
     """True if current IST time is before noon — morning entry run."""
-    # *** TEMP OVERRIDE FOR DEBUGGING — REMOVE THE NEXT LINE TO REVERT ***
-    return False
     now = datetime.datetime.now(IST)
     return now.hour < 12
 
