@@ -147,13 +147,10 @@
     "atrTgt": 4.0
   },
   "last_run": {
-    "mode": "evening",
-    "ranAt": "17 Jun 2026, 21:56 IST",
-    "marketHealthy": true,
-    "scanHits": 138,
-    "uniqueSymbols": 138,
-    "candidatesQualified": 0,
-    "queued": 0,
-    "blockedReason": "No scan combinations matched the entry rules."
+    "mode": "morning",
+    "ranAt": "18 Jun 2026, 06:11 IST",
+    "pendingBefore": 0,
+    "entered": 0,
+    "blockedReason": "No pending trades were available to enter."
   }
 }
