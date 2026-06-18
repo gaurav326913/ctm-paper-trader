@@ -1,4 +1,9 @@
-"""chartink.py — scrapes all scan results from Chartink's internal API."""
+"""chartink.py — scrapes all scan results from Chartink's internal API.
+
+DEBUG VERSION: adds raw response logging for the champion-d scan only,
+to diagnose why it has returned 0 stocks for 6+ weeks straight.
+Remove the debug block once the root cause is found.
+"""
 
 import os, time, logging, requests
 from bs4 import BeautifulSoup
@@ -63,7 +68,7 @@ def fetch_all() -> dict:
 
         # ── Step 2: Login ─────────────────────────────────────────────────────
         if EMAIL:
-            time.sleep(2)  # pause to avoid bot detection
+            time.sleep(2)
             login_resp = sess.post(
                 "https://chartink.com/login",
                 data={"_token": csrf, "email": EMAIL, "password": PASSWORD},
@@ -72,15 +77,11 @@ def fetch_all() -> dict:
                 allow_redirects=True,
             )
             log.info("Chartink login HTTP status: %d", login_resp.status_code)
-
-            # Check for logout link — only present when logged in
             logged_in = "logout" in login_resp.text.lower()
             log.info("Chartink logged in: %s", logged_in)
-
             if not logged_in:
                 log.warning("Chartink login failed — scans will run as guest (limited results)")
 
-            # ── Step 3: Refresh CSRF after login ─────────────────────────────
             time.sleep(1)
             fresh_csrf = _get_csrf(sess, "https://chartink.com/screener/")
             if fresh_csrf:
@@ -91,7 +92,7 @@ def fetch_all() -> dict:
         else:
             log.warning("No Chartink credentials set — running as guest")
 
-        # ── Step 4: Run each scan ─────────────────────────────────────────────
+        # ── Step 3: Run each scan ─────────────────────────────────────────────
         for sid, cfg in SCANS.items():
             try:
                 resp = sess.post(
@@ -104,6 +105,16 @@ def fetch_all() -> dict:
                     },
                     timeout=60,
                 )
+
+                # ── DEBUG BLOCK — only for champion-d, remove once diagnosed ──
+                if sid == "champion-d":
+                    log.info("=" * 50)
+                    log.info("DEBUG champion-d HTTP status: %d", resp.status_code)
+                    log.info("DEBUG champion-d raw response (first 1500 chars):")
+                    log.info(resp.text[:1500])
+                    log.info("=" * 50)
+                # ── END DEBUG BLOCK ─────────────────────────────────────────
+
                 d    = resp.json()
                 syms = [x["nsecode"].strip().upper() for x in d.get("data", []) if x.get("nsecode")]
                 results[sid] = syms
