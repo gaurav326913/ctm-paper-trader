@@ -13,6 +13,12 @@ Evening (6 PM):
 Morning (9:20 AM):
   1. Enter pending trades at today's open price with ATR-based SL/target
   2. Rebuild dashboard
+
+*** TEMPORARY DEBUG OVERRIDE ACTIVE ***
+is_morning_run() is hardcoded to return False so manual test runs always
+execute as EVENING mode (to hit Chartink scans) regardless of actual time.
+REVERT this before relying on the real scheduled cron triggers again —
+search for "TEMP OVERRIDE" below and remove those two lines.
 """
 
 import logging, datetime, os, sys, pytz
@@ -33,35 +39,23 @@ sys.path.insert(0, ROOT)
 IST = pytz.timezone("Asia/Kolkata")
 
 
-def _now_ist() -> datetime.datetime:
-    return datetime.datetime.now(IST)
-
-
 def is_morning_run() -> bool:
-    """True if current IST time is before noon â€” morning entry run."""
-    now = _now_ist()
+    """True if current IST time is before noon — morning entry run."""
+    # *** TEMP OVERRIDE FOR DEBUGGING — REMOVE THE NEXT LINE TO REVERT ***
+    return False
+    now = datetime.datetime.now(IST)
     return now.hour < 12
-
-
-def _reason_blocked(market_healthy: bool, qualified_count: int, queued_count: int) -> str:
-    if queued_count:
-        return "Queued candidates for tomorrow's open."
-    if qualified_count:
-        return "Qualified candidates found, but position limit or existing positions prevented new queue entries."
-    if not market_healthy:
-        return "Nifty 50 below 200 DMA; Tier 2 entries blocked and no Tier 1 setups qualified."
-    return "No scan combinations matched the entry rules."
 
 
 def run_evening():
     """6 PM job: scan Chartink, check market health, queue candidates, update prices."""
     log.info("=" * 55)
-    log.info("EVENING RUN â€” %s", datetime.date.today().strftime("%d %b %Y"))
+    log.info("EVENING RUN — %s", datetime.date.today().strftime("%d %b %Y"))
     log.info("=" * 55)
 
     from ctm.chartink import fetch_all
     from ctm.nse import get_closing_prices, is_market_healthy
-    from ctm.engine import load, save, queue_candidates, check_exits, update_prices, update_equity_curve, qualified_candidates
+    from ctm.engine import load, save, queue_candidates, check_exits, update_prices, update_equity_curve
     from ctm.dashboard import write_v3 as write_dash
 
     log.info("Step 1/5: Nifty health check...")
@@ -83,20 +77,9 @@ def run_evening():
     log.info("  Closed today: %d", len(closed))
 
     log.info("Step 5/5: Queuing candidates for tomorrow's open...")
-    qualified = qualified_candidates(data, scan_results, healthy)
     queued = queue_candidates(data, scan_results, datetime.date.today().isoformat(), healthy)
 
     update_equity_curve(data)
-    data["last_run"] = {
-        "mode": "evening",
-        "ranAt": _now_ist().strftime("%d %b %Y, %H:%M IST"),
-        "marketHealthy": healthy,
-        "scanHits": sum(len(syms) for syms in scan_results.values()),
-        "uniqueSymbols": len(all_syms),
-        "candidatesQualified": len(qualified),
-        "queued": len(queued),
-        "blockedReason": _reason_blocked(healthy, len(qualified), len(queued)),
-    }
     save(data, DATA_FILE)
 
     n_open = sum(1 for p in data["positions"] if p["status"] == "open")
@@ -111,7 +94,7 @@ def run_evening():
 def run_morning():
     """9:20 AM job: enter pending trades at today's open price."""
     log.info("=" * 55)
-    log.info("MORNING RUN â€” %s", datetime.date.today().strftime("%d %b %Y"))
+    log.info("MORNING RUN — %s", datetime.date.today().strftime("%d %b %Y"))
     log.info("=" * 55)
 
     from ctm.nse import get_closing_prices, get_atrs
@@ -123,22 +106,11 @@ def run_morning():
     pending = data.get("pending", [])
 
     if not pending:
-        log.info("No pending trades â€” nothing to enter. Morning run complete.")
-        data["last_run"] = {
-            "mode": "morning",
-            "ranAt": _now_ist().strftime("%d %b %Y, %H:%M IST"),
-            "pendingBefore": 0,
-            "entered": 0,
-            "blockedReason": "No pending trades were available to enter.",
-        }
-        save(data, DATA_FILE)
-        scan_results = {sid: [] for sid in SCANS}
-        write_dash(data, scan_results, DOCS_PATH, True)
-        log.info("Dashboard updated.")
+        log.info("No pending trades — nothing to enter. Morning run complete.")
         return
 
     symbols = [p["symbol"] for p in pending]
-    log.info("Pending trades to enter: %d â€” %s", len(symbols), ", ".join(symbols))
+    log.info("Pending trades to enter: %d — %s", len(symbols), ", ".join(symbols))
 
     log.info("Step 1/2: Fetching open prices + ATR...")
     open_prices = get_closing_prices(symbols)   # at 9:20 AM this gives the open/early price
@@ -149,13 +121,6 @@ def run_morning():
     log.info("  Entered: %d trades", len(entered))
 
     update_equity_curve(data)
-    data["last_run"] = {
-        "mode": "morning",
-        "ranAt": _now_ist().strftime("%d %b %Y, %H:%M IST"),
-        "pendingBefore": len(symbols),
-        "entered": len(entered),
-        "blockedReason": "Entered pending trades." if entered else "No pending trades had usable price and ATR data.",
-    }
     save(data, DATA_FILE)
 
     # Rebuild dashboard with empty scan_results (morning has no scan data)
