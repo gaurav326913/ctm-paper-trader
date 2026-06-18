@@ -1,13 +1,15 @@
 """chartink.py — scrapes all scan results from Chartink's internal API.
 
-champion-d / champion-w clauses simplified: removed the nested
-countstreak(daily sma(...) < daily sma(...)) construct, which Chartink's
-parser was rejecting with scan_error: "There was a error in running your
-scan". Replaced with a simpler, equivalent trend-filter using direct
-SMA comparisons instead of countstreak over an SMA-comparison boolean.
+TEMPORARY ISOLATION TEST MODE:
+champion-d has been replaced with 4 progressively more complex test
+variants (test-1 through test-4), each run separately and logged, to
+find exactly which clause fragment Chartink's parser rejects with
+scan_error. Once we find the breaking fragment, we'll restore
+champion-d/champion-w properly and remove this test block.
 
-DEBUG block kept on champion-d so we can confirm the fix worked from
-the log (or see a new error if something is still wrong).
+ACTION REQUIRED AFTER THIS TEST: revert chartink.py to the last known
+clean version once we've identified the bug — do not leave this
+test file running in production.
 """
 
 import os, time, logging, requests
@@ -33,11 +35,23 @@ H_LOGIN = {
 }
 
 SCANS = {
-    # ── SIMPLIFIED: removed nested countstreak(sma < sma) which Chartink
-    #    rejected with scan_error. Trend quality now checked via direct
-    #    SMA-above-SMA comparisons (today + yesterday) instead.
-    "champion-d":  {"label": "Champion Daily",    "scan_clause": "( {cash} ( daily sma( daily volume * daily close ,20 ) > 50000000 and daily sma( daily volume * daily close ,50 ) > 50000000 ) and daily close > daily sma( daily close ,20 ) and daily close > daily sma( daily close ,50 ) and daily sma( daily close ,20 ) > daily sma( daily close ,50 ) and 1 day ago daily sma( daily close ,20 ) > 1 day ago daily sma( daily close ,50 ) and daily close > 1 day ago daily close and daily avg true range( 1 ) > 0.4 * daily avg true range( 20 ) and daily close > daily low + ( daily high - daily low ) * 0.30 )"},
-    "champion-w":  {"label": "Champion Weekly",   "scan_clause": "( {cash} ( weekly sma( weekly volume * weekly close ,20 ) > 50000000 and weekly sma( weekly volume * weekly close ,50 ) > 50000000 ) and weekly close > weekly sma( weekly close ,20 ) and weekly close > weekly sma( weekly close ,50 ) and weekly sma( weekly close ,20 ) > weekly sma( weekly close ,50 ) and 1 week ago weekly sma( weekly close ,20 ) > 1 week ago weekly sma( weekly close ,50 ) and weekly close > 1 week ago weekly close and weekly avg true range( 1 ) > 0.4 * weekly avg true range( 20 ) and weekly close > weekly low + ( weekly high - weekly low ) * 0.30 )"},
+    # ── TEST 1: bare minimum — just liquidity + close above 50 DMA ──────────
+    "test-1": {"label": "TEST1 (liquidity+trend)",
+               "scan_clause": "( {cash} daily sma( daily volume * daily close ,20 ) > 50000000 and daily close > daily sma( daily close ,50 ) )"},
+
+    # ── TEST 2: add close > 1 day ago close ("ago" syntax test) ─────────────
+    "test-2": {"label": "TEST2 (+yesterday compare)",
+               "scan_clause": "( {cash} daily sma( daily volume * daily close ,20 ) > 50000000 and daily close > daily sma( daily close ,50 ) and daily close > 1 day ago daily close )"},
+
+    # ── TEST 3: add ATR expansion condition ──────────────────────────────────
+    "test-3": {"label": "TEST3 (+ATR expansion)",
+               "scan_clause": "( {cash} daily sma( daily volume * daily close ,20 ) > 50000000 and daily close > daily sma( daily close ,50 ) and daily close > 1 day ago daily close and daily avg true range( 1 ) > 0.4 * daily avg true range( 20 ) )"},
+
+    # ── TEST 4: add the close-in-range-percentile condition ─────────────────
+    "test-4": {"label": "TEST4 (+range close position)",
+               "scan_clause": "( {cash} daily sma( daily volume * daily close ,20 ) > 50000000 and daily close > daily sma( daily close ,50 ) and daily close > 1 day ago daily close and daily avg true range( 1 ) > 0.4 * daily avg true range( 20 ) and daily close > daily low + ( daily high - daily low ) * 0.30 )"},
+
+    # ── Keep the rest of the real scans running normally ────────────────────
     "contraction": {"label": "Contraction",       "scan_clause": "( {cash} ( daily sma( daily volume * daily close ,100 ) > 100000000 and daily sma( daily volume * daily close ,20 ) > 100000000 ) and not ( daily countstreak( 20 , daily sma( daily close ,20 ) < daily sma( daily close ,50 ) ) >= 20 or daily countstreak( 20 , daily sma( daily close ,50 ) < 1 day ago daily sma( daily close ,50 ) ) >= 20 or daily close < daily sma( daily close ,50 ) - daily avg true range( 50 ) or daily close < daily sma( daily close ,50 ) ) and ( daily close > daily sma( daily close ,100 ) or daily close > daily sma( daily close ,200 ) ) )"},
     "ppc":         {"label": "PPC",               "scan_clause": "( {cash} ( daily sma( daily volume * daily close ,20 ) > 100000000 and daily sma( daily volume * daily close ,100 ) > 100000000 ) and not ( daily countstreak( 20 , daily sma( daily close ,20 ) < daily sma( daily close ,50 ) ) >= 20 or daily countstreak( 20 , daily sma( daily close ,50 ) < 1 day ago daily sma( daily close ,50 ) ) >= 20 or daily close < daily sma( daily close ,50 ) or daily close < daily sma( daily close ,50 ) - daily avg true range( 50 ) ) and ( daily close > daily sma( daily close ,100 ) or daily close > daily sma( daily close ,200 ) ) and ( daily volume > daily sma( daily volume ,5 ) * 1.5 or daily volume > daily sma( daily volume ,20 ) * 1.5 or daily volume > daily sma( daily volume ,100 ) * 1.5 ) and daily close > 1 day ago daily close and ( daily avg true range( 1 ) > daily avg true range( 20 ) * 1.5 or daily avg true range( 1 ) > daily avg true range( 5 ) * 1.5 ) )"},
     "npc":         {"label": "NPC",               "scan_clause": "( {cash} daily close < 1 day ago daily close and daily sma( daily volume * daily close ,20 ) > 100000000 and daily sma( daily volume * daily close ,100 ) > 100000000 and ( daily avg true range( 1 ) > daily avg true range( 20 ) * 1.5 or daily avg true range( 1 ) > daily avg true range( 5 ) * 1.5 ) and ( daily volume > daily sma( daily volume ,5 ) * 1.5 or daily volume > daily sma( daily volume ,20 ) * 1.5 or daily volume > daily sma( daily volume ,100 ) * 1.5 ) and daily sma( daily close ,1 ) < 1 day ago daily sma( daily close ,1 ) )"},
@@ -48,7 +62,6 @@ SCANS = {
 
 
 def _get_csrf(sess: requests.Session, url: str) -> str | None:
-    """Fetch a page and extract the CSRF meta tag."""
     try:
         r    = sess.get(url, headers=H, timeout=30)
         meta = BeautifulSoup(r.content, "html.parser").find("meta", {"name": "csrf-token"})
@@ -109,19 +122,16 @@ def fetch_all() -> dict:
                     timeout=60,
                 )
 
-                # ── DEBUG BLOCK — keep until champion-d/-w confirmed fixed ──
-                if sid in ("champion-d", "champion-w"):
+                if sid.startswith("test-"):
                     log.info("=" * 50)
                     log.info("DEBUG %s HTTP status: %d", sid, resp.status_code)
-                    log.info("DEBUG %s raw response (first 1500 chars):", sid)
-                    log.info(resp.text[:1500])
+                    log.info("DEBUG %s raw response: %s", sid, resp.text[:500])
                     log.info("=" * 50)
-                # ── END DEBUG BLOCK ─────────────────────────────────────────
 
                 d    = resp.json()
                 syms = [x["nsecode"].strip().upper() for x in d.get("data", []) if x.get("nsecode")]
                 results[sid] = syms
-                log.info("  %-18s -> %d stocks", cfg["label"], len(syms))
+                log.info("  %-22s -> %d stocks", cfg["label"], len(syms))
                 time.sleep(1.5)
             except Exception as e:
                 log.error("Scan %s failed: %s", sid, e)
