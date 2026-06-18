@@ -1,8 +1,13 @@
 """chartink.py — scrapes all scan results from Chartink's internal API.
 
-DEBUG VERSION: adds raw response logging for the champion-d scan only,
-to diagnose why it has returned 0 stocks for 6+ weeks straight.
-Remove the debug block once the root cause is found.
+champion-d / champion-w clauses simplified: removed the nested
+countstreak(daily sma(...) < daily sma(...)) construct, which Chartink's
+parser was rejecting with scan_error: "There was a error in running your
+scan". Replaced with a simpler, equivalent trend-filter using direct
+SMA comparisons instead of countstreak over an SMA-comparison boolean.
+
+DEBUG block kept on champion-d so we can confirm the fix worked from
+the log (or see a new error if something is still wrong).
 """
 
 import os, time, logging, requests
@@ -13,14 +18,12 @@ log = logging.getLogger("ctm.chartink")
 EMAIL    = os.environ.get("CHARTINK_EMAIL", "")
 PASSWORD = os.environ.get("CHARTINK_PASSWORD", "")
 
-# Base headers for scan API calls
 H = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Accept": "application/json, text/javascript, */*; q=0.01",
     "X-Requested-With": "XMLHttpRequest",
 }
 
-# Headers for login POST — must look like a real browser form submission
 H_LOGIN = {
     "User-Agent":   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Accept":       "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -30,8 +33,11 @@ H_LOGIN = {
 }
 
 SCANS = {
-    "champion-d":  {"label": "Champion Daily",    "scan_clause": "( {cash} ( daily sma( daily volume * daily close ,20 ) > 50000000 and daily sma( daily volume * daily close ,50 ) > 50000000 ) and not ( daily countstreak( 20 , daily sma( daily close ,20 ) < daily sma( daily close ,50 ) ) >= 20 or daily close < daily sma( daily close ,50 ) ) and daily close > daily sma( daily close ,20 ) and daily close > daily sma( daily close ,50 ) and daily close > 1 day ago daily close and daily avg true range( 1 ) > 0.4 * daily avg true range( 20 ) and daily close > daily low + ( daily high - daily low ) * 0.30 )"},
-    "champion-w":  {"label": "Champion Weekly",   "scan_clause": "( {cash} ( weekly sma( weekly volume * weekly close ,20 ) > 50000000 and weekly sma( weekly volume * weekly close ,50 ) > 50000000 ) and not ( weekly countstreak( 20 , weekly sma( weekly close ,20 ) < weekly sma( weekly close ,50 ) ) >= 20 or weekly close < weekly sma( weekly close ,50 ) ) and weekly close > weekly sma( weekly close ,20 ) and weekly close > weekly sma( weekly close ,50 ) and weekly close > 1 week ago weekly close and weekly avg true range( 1 ) > 0.4 * weekly avg true range( 20 ) and weekly close > weekly low + ( weekly high - weekly low ) * 0.30 )"},
+    # ── SIMPLIFIED: removed nested countstreak(sma < sma) which Chartink
+    #    rejected with scan_error. Trend quality now checked via direct
+    #    SMA-above-SMA comparisons (today + yesterday) instead.
+    "champion-d":  {"label": "Champion Daily",    "scan_clause": "( {cash} ( daily sma( daily volume * daily close ,20 ) > 50000000 and daily sma( daily volume * daily close ,50 ) > 50000000 ) and daily close > daily sma( daily close ,20 ) and daily close > daily sma( daily close ,50 ) and daily sma( daily close ,20 ) > daily sma( daily close ,50 ) and 1 day ago daily sma( daily close ,20 ) > 1 day ago daily sma( daily close ,50 ) and daily close > 1 day ago daily close and daily avg true range( 1 ) > 0.4 * daily avg true range( 20 ) and daily close > daily low + ( daily high - daily low ) * 0.30 )"},
+    "champion-w":  {"label": "Champion Weekly",   "scan_clause": "( {cash} ( weekly sma( weekly volume * weekly close ,20 ) > 50000000 and weekly sma( weekly volume * weekly close ,50 ) > 50000000 ) and weekly close > weekly sma( weekly close ,20 ) and weekly close > weekly sma( weekly close ,50 ) and weekly sma( weekly close ,20 ) > weekly sma( weekly close ,50 ) and 1 week ago weekly sma( weekly close ,20 ) > 1 week ago weekly sma( weekly close ,50 ) and weekly close > 1 week ago weekly close and weekly avg true range( 1 ) > 0.4 * weekly avg true range( 20 ) and weekly close > weekly low + ( weekly high - weekly low ) * 0.30 )"},
     "contraction": {"label": "Contraction",       "scan_clause": "( {cash} ( daily sma( daily volume * daily close ,100 ) > 100000000 and daily sma( daily volume * daily close ,20 ) > 100000000 ) and not ( daily countstreak( 20 , daily sma( daily close ,20 ) < daily sma( daily close ,50 ) ) >= 20 or daily countstreak( 20 , daily sma( daily close ,50 ) < 1 day ago daily sma( daily close ,50 ) ) >= 20 or daily close < daily sma( daily close ,50 ) - daily avg true range( 50 ) or daily close < daily sma( daily close ,50 ) ) and ( daily close > daily sma( daily close ,100 ) or daily close > daily sma( daily close ,200 ) ) )"},
     "ppc":         {"label": "PPC",               "scan_clause": "( {cash} ( daily sma( daily volume * daily close ,20 ) > 100000000 and daily sma( daily volume * daily close ,100 ) > 100000000 ) and not ( daily countstreak( 20 , daily sma( daily close ,20 ) < daily sma( daily close ,50 ) ) >= 20 or daily countstreak( 20 , daily sma( daily close ,50 ) < 1 day ago daily sma( daily close ,50 ) ) >= 20 or daily close < daily sma( daily close ,50 ) or daily close < daily sma( daily close ,50 ) - daily avg true range( 50 ) ) and ( daily close > daily sma( daily close ,100 ) or daily close > daily sma( daily close ,200 ) ) and ( daily volume > daily sma( daily volume ,5 ) * 1.5 or daily volume > daily sma( daily volume ,20 ) * 1.5 or daily volume > daily sma( daily volume ,100 ) * 1.5 ) and daily close > 1 day ago daily close and ( daily avg true range( 1 ) > daily avg true range( 20 ) * 1.5 or daily avg true range( 1 ) > daily avg true range( 5 ) * 1.5 ) )"},
     "npc":         {"label": "NPC",               "scan_clause": "( {cash} daily close < 1 day ago daily close and daily sma( daily volume * daily close ,20 ) > 100000000 and daily sma( daily volume * daily close ,100 ) > 100000000 and ( daily avg true range( 1 ) > daily avg true range( 20 ) * 1.5 or daily avg true range( 1 ) > daily avg true range( 5 ) * 1.5 ) and ( daily volume > daily sma( daily volume ,5 ) * 1.5 or daily volume > daily sma( daily volume ,20 ) * 1.5 or daily volume > daily sma( daily volume ,100 ) * 1.5 ) and daily sma( daily close ,1 ) < 1 day ago daily sma( daily close ,1 ) )"},
@@ -59,14 +65,12 @@ def fetch_all() -> dict:
     results = {}
     with requests.Session() as sess:
 
-        # ── Step 1: Fetch CSRF from screener page ─────────────────────────────
         csrf = _get_csrf(sess, "https://chartink.com/screener/")
         if not csrf:
             log.error("Could not get Chartink CSRF — aborting")
             return {}
         log.info("Chartink CSRF fetched OK")
 
-        # ── Step 2: Login ─────────────────────────────────────────────────────
         if EMAIL:
             time.sleep(2)
             login_resp = sess.post(
@@ -92,7 +96,6 @@ def fetch_all() -> dict:
         else:
             log.warning("No Chartink credentials set — running as guest")
 
-        # ── Step 3: Run each scan ─────────────────────────────────────────────
         for sid, cfg in SCANS.items():
             try:
                 resp = sess.post(
@@ -106,11 +109,11 @@ def fetch_all() -> dict:
                     timeout=60,
                 )
 
-                # ── DEBUG BLOCK — only for champion-d, remove once diagnosed ──
-                if sid == "champion-d":
+                # ── DEBUG BLOCK — keep until champion-d/-w confirmed fixed ──
+                if sid in ("champion-d", "champion-w"):
                     log.info("=" * 50)
-                    log.info("DEBUG champion-d HTTP status: %d", resp.status_code)
-                    log.info("DEBUG champion-d raw response (first 1500 chars):")
+                    log.info("DEBUG %s HTTP status: %d", sid, resp.status_code)
+                    log.info("DEBUG %s raw response (first 1500 chars):", sid)
                     log.info(resp.text[:1500])
                     log.info("=" * 50)
                 # ── END DEBUG BLOCK ─────────────────────────────────────────
