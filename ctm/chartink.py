@@ -1,17 +1,15 @@
 """chartink.py — scrapes all scan results from Chartink's internal API.
 
 SCAN QUALITY FIX (June 2026):
-- Contraction: added explicit range-contraction filters (ATR shrinking)
-  and SMA-trending-up checks. Was returning 750+ stocks; should now
-  return 50-150 on a typical day.
-- PPC: tightened volume to 2x 20-day average (was 1.5x on any of 3
-  windows). Added 50 DMA trending up + must be above 100 DMA.
-  Was returning 888 stocks; should now return 20-80 on a typical day.
+- Contraction: added "close within 3% of 20-day high" to ensure stock
+  is genuinely coiling near recent highs, not just above SMA with low ATR.
+  Was returning 320 stocks; should now return 30-80.
+- PPC: already tightened (2x volume, 1.5x ATR) — returning 11, good.
 
-SYNTAX FIX (June 2026, applied to all clauses):
+SYNTAX FIX (June 2026):
+  Drop timeframe prefix on historical (ago) operand:
   WRONG: daily close > 1 day ago daily close
   RIGHT: daily close > 1 day ago close
-  (drop the timeframe prefix on the historical/ago operand)
 """
 
 import os, time, logging, requests
@@ -38,8 +36,6 @@ H_LOGIN = {
 
 SCANS = {
     # ── Champion Daily ────────────────────────────────────────────────────────
-    # Close above 20 & 50 DMA, 20 DMA above 50 DMA, closed up vs yesterday,
-    # ATR expanding (momentum present), close in top 30% of today's range.
     "champion-d": {
         "label": "Champion Daily",
         "scan_clause": (
@@ -56,7 +52,6 @@ SCANS = {
     },
 
     # ── Champion Weekly ───────────────────────────────────────────────────────
-    # Same logic on weekly timeframe — strongest trend signal in the system.
     "champion-w": {
         "label": "Champion Weekly",
         "scan_clause": (
@@ -72,13 +67,12 @@ SCANS = {
         ),
     },
 
-    # ── Contraction (TIGHTENED) ───────────────────────────────────────────────
-    # Stock in uptrend (above 50 DMA, both 20 & 50 DMA trending up day-over-day)
-    # AND range explicitly contracting:
-    #   - 5-day ATR < 20-day ATR  (coiling over the past week vs past month)
-    #   - today's ATR < 10-day ATR (today itself is a tight/narrow day)
-    # This is the classic coiling-spring setup before a breakout.
-    # Expected: 50-150 stocks on a typical trending market day.
+    # ── Contraction (FURTHER TIGHTENED) ──────────────────────────────────────
+    # Added: close must be within 3% of the 20-day high.
+    # This ensures the stock is genuinely coiling near recent highs
+    # (a proper base/flag formation), not just any stock above SMA
+    # with a quiet day. Classic swing setup — tight range near highs.
+    # Expected: 30-80 stocks on a typical trending market day.
     "contraction": {
         "label": "Contraction",
         "scan_clause": (
@@ -91,16 +85,15 @@ SCANS = {
             "and daily sma( daily close ,20 ) > 1 day ago sma( daily close ,20 ) "
             "and daily avg true range( 5 ) < daily avg true range( 20 ) "
             "and daily avg true range( 1 ) < daily avg true range( 10 ) "
+            "and daily close > daily max( 20 , daily high ) * 0.97 "
             "and ( daily close > daily sma( daily close ,100 ) "
             "or daily close > daily sma( daily close ,200 ) ) )"
         ),
     },
 
-    # ── PPC (TIGHTENED) ───────────────────────────────────────────────────────
-    # Institutional accumulation day: stock in uptrend, volume is 2x the
-    # 20-day average (was 1.5x on any of 3 windows — too loose), ATR expanding
-    # confirms the volume is real momentum not just noise, closed up vs yesterday.
-    # Expected: 20-80 stocks on a typical day.
+    # ── PPC ───────────────────────────────────────────────────────────────────
+    # Institutional accumulation: 2x volume on 20-day avg, ATR expanding,
+    # stock in uptrend above 50 & 100 DMA, closed up vs yesterday.
     "ppc": {
         "label": "PPC",
         "scan_clause": (
@@ -117,7 +110,7 @@ SCANS = {
     },
 
     # ── NPC ───────────────────────────────────────────────────────────────────
-    # High-volume down day — used as exit alert on open positions, not entry.
+    # High-volume down day — exit alert on open positions, not an entry signal.
     "npc": {
         "label": "NPC",
         "scan_clause": (
@@ -135,8 +128,6 @@ SCANS = {
     },
 
     # ── Big Movers ────────────────────────────────────────────────────────────
-    # Stock trading well above its 126-day low with good liquidity.
-    # No historical comparison — was the only working scan for 6 weeks.
     "bigmover": {
         "label": "Big Movers",
         "scan_clause": (
@@ -148,8 +139,6 @@ SCANS = {
     },
 
     # ── India Strong ──────────────────────────────────────────────────────────
-    # Large-cap quality filter: very high liquidity (500M turnover),
-    # in uptrend, not extended, not in a long downtrend.
     "indstrong": {
         "label": "India Strong",
         "scan_clause": (
@@ -172,8 +161,6 @@ SCANS = {
     },
 
     # ── New Stocks (IPO) ──────────────────────────────────────────────────────
-    # Stocks listed in the last 120 days — excluded from entry qualification
-    # (no ATR history), kept for dashboard visibility only.
     "newstock": {
         "label": "New Stocks (IPO)",
         "scan_clause": (
