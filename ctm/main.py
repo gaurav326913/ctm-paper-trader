@@ -6,7 +6,7 @@ and executes the appropriate job.
 Evening (6 PM):
   1. Nifty health check
   2. Run Chartink scans
-  3. Qualify candidates (no price fetch needed)
+  3. Qualify candidates first (no price fetch needed)
   4. Fetch prices only for qualified stocks + open positions
   5. Check SL/targets on open positions
   6. Queue qualified candidates
@@ -15,15 +15,6 @@ Evening (6 PM):
 Morning (9:20 AM):
   1. Enter pending trades at today's open price with ATR-based SL/target
   2. Rebuild dashboard
-
-KEY FIX: qualify candidates BEFORE fetching prices. Previously fetching
-prices for all 1234 scan symbols caused 30-minute timeout. Now we only
-fetch prices for qualified candidates (~20 max) + open positions.
-
-*** TEMPORARY DEBUG OVERRIDE ACTIVE ***
-is_morning_run() hardcoded to False so runs always execute as EVENING
-mode regardless of actual time. REVERT after testing — remove the
-"return False" line and the comment above it.
 """
 
 import logging, datetime, os, sys, pytz
@@ -46,8 +37,6 @@ IST = pytz.timezone("Asia/Kolkata")
 
 def is_morning_run() -> bool:
     """True if current IST time is before noon — morning entry run."""
-    # *** TEMP OVERRIDE FOR TESTING — REMOVE THIS LINE TO REVERT ***
-    return False
     now = datetime.datetime.now(IST)
     return now.hour < 12
 
@@ -80,7 +69,7 @@ def run_evening():
     qualified = qualified_candidates(data, scan_results, healthy)
     log.info("  %d candidates qualified for queuing", len(qualified))
 
-    # Only fetch prices for qualified stocks + open positions (not all 1234 symbols)
+    # Only fetch prices for qualified stocks + open positions
     price_syms = list(set(list(qualified.keys()) + open_syms))
     log.info("Step 4/5: Fetching closing prices for %d symbols (qualified + open)...",
              len(price_syms))
