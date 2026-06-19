@@ -6,13 +6,19 @@ and executes the appropriate job.
 Evening (6 PM):
   1. Nifty health check
   2. Run Chartink scans
-  3. Queue qualifying candidates for tomorrow
-  4. Update current prices + check SL/targets on open positions
-  5. Rebuild dashboard
+  3. Qualify candidates (no price fetch needed)
+  4. Fetch prices only for qualified stocks + open positions
+  5. Check SL/targets on open positions
+  6. Queue qualified candidates
+  7. Rebuild dashboard
 
 Morning (9:20 AM):
   1. Enter pending trades at today's open price with ATR-based SL/target
   2. Rebuild dashboard
+
+KEY FIX: qualify candidates BEFORE fetching prices. Previously fetching
+prices for all 1234 scan symbols caused 30-minute timeout. Now we only
+fetch prices for qualified candidates (~20 max) + open positions.
 
 *** TEMPORARY DEBUG OVERRIDE ACTIVE ***
 is_morning_run() hardcoded to False so runs always execute as EVENING
@@ -54,7 +60,8 @@ def run_evening():
 
     from ctm.chartink import fetch_all
     from ctm.nse import get_closing_prices, is_market_healthy
-    from ctm.engine import load, save, queue_candidates, check_exits, update_prices, update_equity_curve
+    from ctm.engine import (load, save, queue_candidates, qualified_candidates,
+                             check_exits, update_prices, update_equity_curve)
     from ctm.dashboard import write_v3 as write_dash
 
     log.info("Step 1/5: Nifty health check...")
@@ -65,12 +72,21 @@ def run_evening():
     all_syms = list({s for syms in scan_results.values() for s in syms})
     log.info("  %d unique symbols across all scans", len(all_syms))
 
-    log.info("Step 3/5: Loading data + fetching closing prices...")
+    log.info("Step 3/5: Loading data + qualifying candidates...")
     data      = load(DATA_FILE)
     open_syms = [p["symbol"] for p in data["positions"] if p["status"] == "open"]
-    prices    = get_closing_prices(list(set(all_syms + open_syms)))
 
-    log.info("Step 4/5: Checking SL / Target exits...")
+    # Qualify FIRST — no price data needed for this step
+    qualified = qualified_candidates(data, scan_results, healthy)
+    log.info("  %d candidates qualified for queuing", len(qualified))
+
+    # Only fetch prices for qualified stocks + open positions (not all 1234 symbols)
+    price_syms = list(set(list(qualified.keys()) + open_syms))
+    log.info("Step 4/5: Fetching closing prices for %d symbols (qualified + open)...",
+             len(price_syms))
+    prices = get_closing_prices(price_syms)
+
+    log.info("Step 4b/5: Checking SL / Target exits...")
     closed = check_exits(data, prices)
     update_prices(data, prices)
     log.info("  Closed today: %d", len(closed))
