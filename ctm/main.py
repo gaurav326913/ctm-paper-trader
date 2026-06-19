@@ -13,6 +13,11 @@ Evening (6 PM):
 Morning (9:20 AM):
   1. Enter pending trades at today's open price with ATR-based SL/target
   2. Rebuild dashboard
+
+*** TEMPORARY DEBUG OVERRIDE ACTIVE ***
+is_morning_run() hardcoded to False so runs always execute as EVENING
+mode regardless of actual time. REVERT after testing — remove the
+"return False" line and the comment above it.
 """
 
 import logging, datetime, os, sys, pytz
@@ -35,6 +40,8 @@ IST = pytz.timezone("Asia/Kolkata")
 
 def is_morning_run() -> bool:
     """True if current IST time is before noon — morning entry run."""
+    # *** TEMP OVERRIDE FOR TESTING — REMOVE THIS LINE TO REVERT ***
+    return False
     now = datetime.datetime.now(IST)
     return now.hour < 12
 
@@ -105,7 +112,7 @@ def run_morning():
     log.info("Pending trades to enter: %d — %s", len(symbols), ", ".join(symbols))
 
     log.info("Step 1/2: Fetching open prices + ATR...")
-    open_prices = get_closing_prices(symbols)   # at 9:20 AM this gives the open/early price
+    open_prices = get_closing_prices(symbols)
     atrs        = get_atrs(symbols)
 
     log.info("Step 2/2: Entering trades...")
@@ -115,7 +122,6 @@ def run_morning():
     update_equity_curve(data)
     save(data, DATA_FILE)
 
-    # Rebuild dashboard with empty scan_results (morning has no scan data)
     scan_results = {sid: [] for sid in SCANS}
     write_dash(data, scan_results, DOCS_PATH, True)
     log.info("Dashboard updated.")
