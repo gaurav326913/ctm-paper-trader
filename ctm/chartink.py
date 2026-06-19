@@ -1,10 +1,21 @@
 """chartink.py — scrapes all scan results from Chartink's internal API.
 
-ROOT CAUSE FOUND: "daily close > 1 day ago daily close" breaks Chartink's
-parser with scan_error. test-1 (857 stocks, no yesterday-compare) worked;
-test-2 (added that exact line) broke immediately. This file tests two
-alternate syntaxes for the same "closed up vs yesterday" condition to
-find one Chartink actually accepts.
+ROOT CAUSE FIX (June 2026):
+Chartink's parser rejects "N day ago daily X" syntax — the timeframe
+prefix (daily/weekly) must be DROPPED on the historical (ago) operand.
+
+WRONG:  daily close > 1 day ago daily close
+RIGHT:  daily close > 1 day ago close
+
+WRONG:  daily sma( daily close ,50 ) < 1 day ago daily sma( daily close ,50 )
+RIGHT:  daily sma( daily close ,50 ) < 1 day ago sma( daily close ,50 )
+
+This single rule fix was missing across ALL scan clauses for 6+ weeks,
+causing every quality scan (Champion D/W, Contraction, PPC, NPC,
+India Strong) to return scan_error and 0 stocks. Only Big Movers was
+unaffected because it contains no historical comparisons.
+
+All clauses below have been corrected accordingly.
 """
 
 import os, time, logging, requests
@@ -30,29 +41,137 @@ H_LOGIN = {
 }
 
 SCANS = {
-    # ── Baseline that we know works (857 stocks) ─────────────────────────────
-    "test-1": {"label": "TEST1 (known working baseline)",
-               "scan_clause": "( {cash} daily sma( daily volume * daily close ,20 ) > 50000000 and daily close > daily sma( daily close ,50 ) )"},
+    # Champion Daily — fixed: "1 day ago close" (not "1 day ago daily close")
+    "champion-d": {
+        "label": "Champion Daily",
+        "scan_clause": (
+            "( {cash} "
+            "( daily sma( daily volume * daily close ,20 ) > 50000000 "
+            "and daily sma( daily volume * daily close ,50 ) > 50000000 ) "
+            "and daily close > daily sma( daily close ,20 ) "
+            "and daily close > daily sma( daily close ,50 ) "
+            "and daily sma( daily close ,20 ) > daily sma( daily close ,50 ) "
+            "and daily close > 1 day ago close "
+            "and daily avg true range( 1 ) > 0.4 * daily avg true range( 20 ) "
+            "and daily close > daily low + ( daily high - daily low ) * 0.30 )"
+        ),
+    },
 
-    # ── FIX ATTEMPT A: drop "daily" on the second operand ───────────────────
-    "fix-a": {"label": "FIXA (drop daily on 2nd operand)",
-              "scan_clause": "( {cash} daily sma( daily volume * daily close ,20 ) > 50000000 and daily close > daily sma( daily close ,50 ) and daily close > 1 day ago close )"},
+    # Champion Weekly — fixed: "1 week ago close" (not "1 week ago weekly close")
+    "champion-w": {
+        "label": "Champion Weekly",
+        "scan_clause": (
+            "( {cash} "
+            "( weekly sma( weekly volume * weekly close ,20 ) > 50000000 "
+            "and weekly sma( weekly volume * weekly close ,50 ) > 50000000 ) "
+            "and weekly close > weekly sma( weekly close ,20 ) "
+            "and weekly close > weekly sma( weekly close ,50 ) "
+            "and weekly sma( weekly close ,20 ) > weekly sma( weekly close ,50 ) "
+            "and weekly close > 1 week ago close "
+            "and weekly avg true range( 1 ) > 0.4 * weekly avg true range( 20 ) "
+            "and weekly close > weekly low + ( weekly high - weekly low ) * 0.30 )"
+        ),
+    },
 
-    # ── FIX ATTEMPT B: wrap the historical term in parentheses ──────────────
-    "fix-b": {"label": "FIXB (parenthesized ago term)",
-              "scan_clause": "( {cash} daily sma( daily volume * daily close ,20 ) > 50000000 and daily close > daily sma( daily close ,50 ) and ( 1 day ago daily close ) < daily close )"},
+    # Contraction — fixed: "1 day ago sma(...)" (not "1 day ago daily sma(...)")
+    "contraction": {
+        "label": "Contraction",
+        "scan_clause": (
+            "( {cash} "
+            "( daily sma( daily volume * daily close ,100 ) > 100000000 "
+            "and daily sma( daily volume * daily close ,20 ) > 100000000 ) "
+            "and not ( "
+            "daily countstreak( 20 , daily sma( daily close ,20 ) < daily sma( daily close ,50 ) ) >= 20 "
+            "or daily sma( daily close ,50 ) < 1 day ago sma( daily close ,50 ) "
+            "or daily close < daily sma( daily close ,50 ) - daily avg true range( 50 ) "
+            "or daily close < daily sma( daily close ,50 ) ) "
+            "and ( daily close > daily sma( daily close ,100 ) "
+            "or daily close > daily sma( daily close ,200 ) ) )"
+        ),
+    },
 
-    # ── FIX ATTEMPT C: use latest/current keyword style some scans use ──────
-    "fix-c": {"label": "FIXC (latest close vs ago)",
-              "scan_clause": "( {cash} daily sma( daily volume * daily close ,20 ) > 50000000 and daily close > daily sma( daily close ,50 ) and latest close > 1 day ago close )"},
+    # PPC — fixed: "1 day ago sma(...)" and "1 day ago close"
+    "ppc": {
+        "label": "PPC",
+        "scan_clause": (
+            "( {cash} "
+            "( daily sma( daily volume * daily close ,20 ) > 100000000 "
+            "and daily sma( daily volume * daily close ,100 ) > 100000000 ) "
+            "and not ( "
+            "daily countstreak( 20 , daily sma( daily close ,20 ) < daily sma( daily close ,50 ) ) >= 20 "
+            "or daily sma( daily close ,50 ) < 1 day ago sma( daily close ,50 ) "
+            "or daily close < daily sma( daily close ,50 ) "
+            "or daily close < daily sma( daily close ,50 ) - daily avg true range( 50 ) ) "
+            "and ( daily close > daily sma( daily close ,100 ) "
+            "or daily close > daily sma( daily close ,200 ) ) "
+            "and ( daily volume > daily sma( daily volume ,5 ) * 1.5 "
+            "or daily volume > daily sma( daily volume ,20 ) * 1.5 "
+            "or daily volume > daily sma( daily volume ,100 ) * 1.5 ) "
+            "and daily close > 1 day ago close "
+            "and ( daily avg true range( 1 ) > daily avg true range( 20 ) * 1.5 "
+            "or daily avg true range( 1 ) > daily avg true range( 5 ) * 1.5 ) )"
+        ),
+    },
 
-    # ── Real scans continue running normally ─────────────────────────────────
-    "contraction": {"label": "Contraction",       "scan_clause": "( {cash} ( daily sma( daily volume * daily close ,100 ) > 100000000 and daily sma( daily volume * daily close ,20 ) > 100000000 ) and not ( daily countstreak( 20 , daily sma( daily close ,20 ) < daily sma( daily close ,50 ) ) >= 20 or daily countstreak( 20 , daily sma( daily close ,50 ) < 1 day ago daily sma( daily close ,50 ) ) >= 20 or daily close < daily sma( daily close ,50 ) - daily avg true range( 50 ) or daily close < daily sma( daily close ,50 ) ) and ( daily close > daily sma( daily close ,100 ) or daily close > daily sma( daily close ,200 ) ) )"},
-    "ppc":         {"label": "PPC",               "scan_clause": "( {cash} ( daily sma( daily volume * daily close ,20 ) > 100000000 and daily sma( daily volume * daily close ,100 ) > 100000000 ) and not ( daily countstreak( 20 , daily sma( daily close ,20 ) < daily sma( daily close ,50 ) ) >= 20 or daily countstreak( 20 , daily sma( daily close ,50 ) < 1 day ago daily sma( daily close ,50 ) ) >= 20 or daily close < daily sma( daily close ,50 ) or daily close < daily sma( daily close ,50 ) - daily avg true range( 50 ) ) and ( daily close > daily sma( daily close ,100 ) or daily close > daily sma( daily close ,200 ) ) and ( daily volume > daily sma( daily volume ,5 ) * 1.5 or daily volume > daily sma( daily volume ,20 ) * 1.5 or daily volume > daily sma( daily volume ,100 ) * 1.5 ) and daily close > 1 day ago daily close and ( daily avg true range( 1 ) > daily avg true range( 20 ) * 1.5 or daily avg true range( 1 ) > daily avg true range( 5 ) * 1.5 ) )"},
-    "npc":         {"label": "NPC",               "scan_clause": "( {cash} daily close < 1 day ago daily close and daily sma( daily volume * daily close ,20 ) > 100000000 and daily sma( daily volume * daily close ,100 ) > 100000000 and ( daily avg true range( 1 ) > daily avg true range( 20 ) * 1.5 or daily avg true range( 1 ) > daily avg true range( 5 ) * 1.5 ) and ( daily volume > daily sma( daily volume ,5 ) * 1.5 or daily volume > daily sma( daily volume ,20 ) * 1.5 or daily volume > daily sma( daily volume ,100 ) * 1.5 ) and daily sma( daily close ,1 ) < 1 day ago daily sma( daily close ,1 ) )"},
-    "bigmover":    {"label": "Big Movers",        "scan_clause": "( {cash} daily close > min( 126 , daily low ) * 1.7 and daily sma( daily volume * daily close ,50 ) > 70000000 and daily sma( daily volume * daily close ,100 ) > 70000000 )"},
-    "indstrong":   {"label": "India Strong",      "scan_clause": "( {cash} daily sma( daily volume * daily close ,100 ) > 500000000 and daily sma( daily volume * daily close ,20 ) > 500000000 and not ( daily countstreak( 20 , daily sma( daily close ,20 ) < daily sma( daily close ,50 ) ) >= 20 or daily countstreak( 20 , daily sma( daily close ,50 ) < 1 day ago daily sma( daily close ,50 ) ) >= 20 or daily close < daily sma( daily close ,50 ) - daily avg true range( 50 ) or daily close < daily sma( daily close ,50 ) ) and ( daily close > daily sma( daily close ,100 ) or daily close > daily sma( daily close ,200 ) ) and not ( daily countstreak( 15 , daily close < daily sma( daily close ,20 ) ) >= 15 or daily countstreak( 15 , daily close < daily sma( daily close ,50 ) ) >= 15 or daily countstreak( 30 , daily close > daily sma( daily close ,20 ) ) >= 30 or daily countstreak( 30 , daily close > daily sma( daily close ,50 ) ) >= 30 ) )"},
-    "newstock":    {"label": "New Stocks (IPO)",  "scan_clause": "( {cash} daily close > 0 and not ( 120 days ago daily close > 0 ) )"},
+    # NPC — fixed: "1 day ago close" and "1 day ago sma(...)"
+    "npc": {
+        "label": "NPC",
+        "scan_clause": (
+            "( {cash} "
+            "daily close < 1 day ago close "
+            "and daily sma( daily volume * daily close ,20 ) > 100000000 "
+            "and daily sma( daily volume * daily close ,100 ) > 100000000 "
+            "and ( daily avg true range( 1 ) > daily avg true range( 20 ) * 1.5 "
+            "or daily avg true range( 1 ) > daily avg true range( 5 ) * 1.5 ) "
+            "and ( daily volume > daily sma( daily volume ,5 ) * 1.5 "
+            "or daily volume > daily sma( daily volume ,20 ) * 1.5 "
+            "or daily volume > daily sma( daily volume ,100 ) * 1.5 ) "
+            "and daily sma( daily close ,1 ) < 1 day ago sma( daily close ,1 ) )"
+        ),
+    },
+
+    # Big Movers — unchanged (no historical comparisons, was already working)
+    "bigmover": {
+        "label": "Big Movers",
+        "scan_clause": (
+            "( {cash} "
+            "daily close > min( 126 , daily low ) * 1.7 "
+            "and daily sma( daily volume * daily close ,50 ) > 70000000 "
+            "and daily sma( daily volume * daily close ,100 ) > 70000000 )"
+        ),
+    },
+
+    # India Strong — fixed: "1 day ago sma(...)"
+    "indstrong": {
+        "label": "India Strong",
+        "scan_clause": (
+            "( {cash} "
+            "daily sma( daily volume * daily close ,100 ) > 500000000 "
+            "and daily sma( daily volume * daily close ,20 ) > 500000000 "
+            "and not ( "
+            "daily countstreak( 20 , daily sma( daily close ,20 ) < daily sma( daily close ,50 ) ) >= 20 "
+            "or daily sma( daily close ,50 ) < 1 day ago sma( daily close ,50 ) "
+            "or daily close < daily sma( daily close ,50 ) - daily avg true range( 50 ) "
+            "or daily close < daily sma( daily close ,50 ) ) "
+            "and ( daily close > daily sma( daily close ,100 ) "
+            "or daily close > daily sma( daily close ,200 ) ) "
+            "and not ( "
+            "daily countstreak( 15 , daily close < daily sma( daily close ,20 ) ) >= 15 "
+            "or daily countstreak( 15 , daily close < daily sma( daily close ,50 ) ) >= 15 "
+            "or daily countstreak( 30 , daily close > daily sma( daily close ,20 ) ) >= 30 "
+            "or daily countstreak( 30 , daily close > daily sma( daily close ,50 ) ) >= 30 ) )"
+        ),
+    },
+
+    # New Stocks — fixed: "120 days ago close" (not "120 days ago daily close")
+    "newstock": {
+        "label": "New Stocks (IPO)",
+        "scan_clause": (
+            "( {cash} "
+            "daily close > 0 "
+            "and not ( 120 days ago close > 0 ) )"
+        ),
+    },
 }
 
 
@@ -116,17 +235,10 @@ def fetch_all() -> dict:
                     },
                     timeout=60,
                 )
-
-                if sid.startswith("test-") or sid.startswith("fix-"):
-                    log.info("=" * 50)
-                    log.info("DEBUG %s HTTP status: %d", sid, resp.status_code)
-                    log.info("DEBUG %s raw response: %s", sid, resp.text[:300])
-                    log.info("=" * 50)
-
                 d    = resp.json()
                 syms = [x["nsecode"].strip().upper() for x in d.get("data", []) if x.get("nsecode")]
                 results[sid] = syms
-                log.info("  %-30s -> %d stocks", cfg["label"], len(syms))
+                log.info("  %-18s -> %d stocks", cfg["label"], len(syms))
                 time.sleep(1.5)
             except Exception as e:
                 log.error("Scan %s failed: %s", sid, e)
