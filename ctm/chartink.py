@@ -1,15 +1,23 @@
 """chartink.py — scrapes all scan results from Chartink's internal API.
 
-SCAN QUALITY FIX (June 2026):
-- Contraction: added "close within 3% of 20-day high" to ensure stock
-  is genuinely coiling near recent highs, not just above SMA with low ATR.
-  Was returning 320 stocks; should now return 30-80.
-- PPC: already tightened (2x volume, 1.5x ATR) — returning 11, good.
+FINAL SCAN QUALITY (June 2026):
 
-SYNTAX FIX (June 2026):
-  Drop timeframe prefix on historical (ago) operand:
-  WRONG: daily close > 1 day ago daily close
-  RIGHT: daily close > 1 day ago close
+KEY ADDITION: "within 5% of 52-week high" filter on Champion Daily
+and Champion Weekly.
+  Clause: daily close > daily max( 252 , daily high ) * 0.95
+  Why: stocks near 52-week highs are in strong hands — institutions
+  haven't distributed, there's no overhead supply, and breakouts from
+  these levels have the highest follow-through rate in swing trading.
+  This is the core filter used by IBD/CAN SLIM and most professional
+  momentum systems. Adding it to Champion D/W reduces those scans from
+  300-400 stocks to a much tighter, higher-quality universe.
+
+FULL CHANGE HISTORY:
+  1. Fixed "N day ago daily X" → "N day ago X" syntax (Chartink parser fix)
+  2. Tightened Contraction: added ATR-shrinking + SMA-trending-up checks
+     + "within 3% of 20-day high"
+  3. Tightened PPC: volume 2x 20-day avg (was 1.5x any window), ATR 1.5x
+  4. Added 52-week high proximity to Champion Daily + Weekly (this update)
 """
 
 import os, time, logging, requests
@@ -36,6 +44,10 @@ H_LOGIN = {
 
 SCANS = {
     # ── Champion Daily ────────────────────────────────────────────────────────
+    # Trend: close above 20 & 50 DMA, 20 DMA above 50 DMA (sequence intact)
+    # Momentum: closed up vs yesterday, ATR expanding, strong close in range
+    # Structure: within 5% of 52-week high (near highs, not recovering)
+    # Liquidity: 20 & 50 day avg turnover > 50M
     "champion-d": {
         "label": "Champion Daily",
         "scan_clause": (
@@ -47,11 +59,15 @@ SCANS = {
             "and daily sma( daily close ,20 ) > daily sma( daily close ,50 ) "
             "and daily close > 1 day ago close "
             "and daily avg true range( 1 ) > 0.4 * daily avg true range( 20 ) "
-            "and daily close > daily low + ( daily high - daily low ) * 0.30 )"
+            "and daily close > daily low + ( daily high - daily low ) * 0.30 "
+            "and daily close > daily max( 252 , daily high ) * 0.95 )"
         ),
     },
 
     # ── Champion Weekly ───────────────────────────────────────────────────────
+    # Same logic on weekly timeframe + within 5% of 52-week high.
+    # Weekly confirmation is the strongest signal in the system —
+    # means institutional money has been accumulating for weeks.
     "champion-w": {
         "label": "Champion Weekly",
         "scan_clause": (
@@ -63,16 +79,16 @@ SCANS = {
             "and weekly sma( weekly close ,20 ) > weekly sma( weekly close ,50 ) "
             "and weekly close > 1 week ago close "
             "and weekly avg true range( 1 ) > 0.4 * weekly avg true range( 20 ) "
-            "and weekly close > weekly low + ( weekly high - weekly low ) * 0.30 )"
+            "and weekly close > weekly low + ( weekly high - weekly low ) * 0.30 "
+            "and daily close > daily max( 252 , daily high ) * 0.95 )"
         ),
     },
 
-    # ── Contraction (FURTHER TIGHTENED) ──────────────────────────────────────
-    # Added: close must be within 3% of the 20-day high.
-    # This ensures the stock is genuinely coiling near recent highs
-    # (a proper base/flag formation), not just any stock above SMA
-    # with a quiet day. Classic swing setup — tight range near highs.
-    # Expected: 30-80 stocks on a typical trending market day.
+    # ── Contraction ───────────────────────────────────────────────────────────
+    # Stock in uptrend (20 & 50 DMA both trending up day-over-day),
+    # range explicitly contracting (5-day ATR < 20-day ATR, today tight),
+    # coiling within 3% of 20-day high (near recent highs, not pulling back deep).
+    # Classic flag/base formation before a breakout.
     "contraction": {
         "label": "Contraction",
         "scan_clause": (
@@ -92,8 +108,9 @@ SCANS = {
     },
 
     # ── PPC ───────────────────────────────────────────────────────────────────
-    # Institutional accumulation: 2x volume on 20-day avg, ATR expanding,
-    # stock in uptrend above 50 & 100 DMA, closed up vs yesterday.
+    # Institutional accumulation day: volume 2x the 20-day average,
+    # ATR expanding (volume is real momentum not noise), stock in uptrend,
+    # 50 DMA trending up, above 100 DMA, closed up vs yesterday.
     "ppc": {
         "label": "PPC",
         "scan_clause": (
@@ -110,7 +127,8 @@ SCANS = {
     },
 
     # ── NPC ───────────────────────────────────────────────────────────────────
-    # High-volume down day — exit alert on open positions, not an entry signal.
+    # High-volume down day. Used as EXIT ALERT on open positions only.
+    # Never used as an entry signal.
     "npc": {
         "label": "NPC",
         "scan_clause": (
@@ -128,6 +146,8 @@ SCANS = {
     },
 
     # ── Big Movers ────────────────────────────────────────────────────────────
+    # Trading well above 126-day low with good liquidity.
+    # Used only in combo with Champion Daily (Tier 2 in engine.py).
     "bigmover": {
         "label": "Big Movers",
         "scan_clause": (
@@ -139,6 +159,10 @@ SCANS = {
     },
 
     # ── India Strong ──────────────────────────────────────────────────────────
+    # Large-cap quality filter: very high liquidity (500M turnover),
+    # in uptrend, 50 DMA trending up, not overextended, not in long downtrend.
+    # Used as a combo filter — qualifies stocks when paired with PPC (Tier 2)
+    # or Champion Daily (Tier 1).
     "indstrong": {
         "label": "India Strong",
         "scan_clause": (
@@ -161,6 +185,9 @@ SCANS = {
     },
 
     # ── New Stocks (IPO) ──────────────────────────────────────────────────────
+    # Stocks listed in the last 120 days.
+    # Kept for dashboard visibility only — excluded from entry qualification
+    # in engine.py since ATR history is insufficient for SL/target calculation.
     "newstock": {
         "label": "New Stocks (IPO)",
         "scan_clause": (
