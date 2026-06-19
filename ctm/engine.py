@@ -5,18 +5,21 @@ Paper trade engine with:
   - ATR-based SL (2x ATR) and Target (4x ATR)
   - Swing-trading scan qualification rules
 
-QUALIFICATION LOGIC (final, June 2026):
-  Philosophy: a stock needs at least TWO independent signals confirming
-  it before entry. One scan passing alone (except Champion Weekly in a
-  healthy market) is insufficient for a high-quality swing pick.
+QUALIFICATION LOGIC (final v2, June 2026):
 
-  Expected output:
-    Good trending market day  : 5-20 candidates
-    Choppy/mixed market day   : 0-5 candidates
-    Unhealthy market (below 200 DMA): 0-3 candidates (Tier 1 only)
+Philosophy: Champion Daily is the anchor. Almost nothing qualifies
+without it. This ensures every pick has confirmed daily momentum
+PLUS at least one additional signal.
 
-  This replaces the previous logic where Champion Daily alone (365 stocks)
-  qualified, flooding the queue with low-conviction entries.
+Champion Weekly alone removed from Tier 2 — was letting 170 stocks
+through on strong market days. Weekly is now only used in combo
+with Daily (Tier 1), where it's the highest-conviction setup.
+
+Expected output:
+  Strong bull day   : 20-60 candidates (capped at MAX_POSITIONS=20)
+  Normal day        : 5-20 candidates
+  Choppy/weak day   : 0-5 candidates
+  Below 200 DMA     : 0-3 candidates (Tier 1 only)
 """
 
 import json, os, time, datetime, logging
@@ -27,44 +30,41 @@ POS_SIZE   = int(os.environ.get("POSITION_SIZE", 25000))
 MAX_POS    = int(os.environ.get("MAX_POSITIONS",    20))
 ATR_SL     = float(os.environ.get("ATR_SL_MULT",   2.0))
 ATR_TGT    = float(os.environ.get("ATR_TGT_MULT",  4.0))
-FB_SL_PCT  = 5.0    # fallback SL % if ATR unavailable
-FB_TGT_PCT = 10.0   # fallback target % if ATR unavailable
+FB_SL_PCT  = 5.0
+FB_TGT_PCT = 10.0
 
 
-# ── Swing trading qualification rules ─────────────────────────────────────────
-#
-# TIER 1: queue regardless of Nifty health
-# These are the highest-conviction setups — two or more independent
-# signals confirming each other. Enter even in a weak market.
-#
+# ── Qualification rules ───────────────────────────────────────────────────────
+
+# Tier 1: queue regardless of Nifty health
+# All combos require Champion Daily — ensures confirmed daily momentum.
+# Champion Weekly + Daily is the single best swing setup available.
 TIER1_COMBOS = [
-    {"champion-w", "champion-d"},   # weekly + daily trend both confirmed — best possible
-    {"champion-d", "contraction"},  # uptrend + coiling near highs — classic swing base
-    {"champion-d", "ppc"},          # uptrend + institutional volume surge today
-    {"champion-d", "indstrong"},    # quality large-cap confirmed in daily uptrend
+    {"champion-w", "champion-d"},   # both timeframes confirmed — best possible
+    {"champion-d", "contraction"},  # uptrend + coiling near highs
+    {"champion-d", "ppc"},          # uptrend + institutional volume surge
+    {"champion-d", "indstrong"},    # quality large-cap in confirmed uptrend
 ]
 
-# TIER 2: queue only when Nifty is healthy (above 200 DMA)
-# Slightly lower conviction — single strong signal or less-common combo.
-# Needs market tailwind to act on.
-#
+# Tier 2: queue only when Nifty healthy (above 200 DMA)
+# Champion Weekly standalone removed — too broad (170 stocks on bull days).
+# Only high-specificity combos remain here.
 TIER2_COMBOS = [
-    {"champion-w"},              # weekly trend intact — strong standalone in healthy market
-    {"ppc", "indstrong"},        # institutional buying in quality large-cap
-    {"champion-d", "bigmover"},  # daily trend + 6-month breakout level
+    {"ppc", "indstrong"},           # institutional buying in quality large-cap
+    {"champion-d", "bigmover"},     # daily trend + 6-month breakout level
 ]
 
-# NEVER queue standalone:
-#   champion-d alone  — 300-400 stocks on any rally day, no confirmation
-#   contraction alone — coiling but daily trend not confirmed
+# Never queue standalone:
+#   champion-d alone  — anchor scan, needs confirmation
+#   champion-w alone  — too broad standalone (moved to Tier 1 combo only)
+#   contraction alone — coiling without daily trend confirmation
 #   bigmover alone    — noise, no trend filter
 #   indstrong alone   — quality screener, not an entry trigger
-#   npc               — exit alert only, not an entry
-#   newstock          — IPOs have no ATR history for SL/target calculation
+#   npc               — exit alert on open positions only
+#   newstock          — IPOs lack ATR history
 
 
 def _qualifies(scans_set: set, market_healthy: bool) -> bool:
-    """Return True if the stock's scan set meets Tier 1 or Tier 2 criteria."""
     for combo in TIER1_COMBOS:
         if combo.issubset(scans_set):
             return True
@@ -90,7 +90,7 @@ def qualified_candidates(data: dict, scan_results: dict, market_healthy: bool) -
         if _qualifies(sids, market_healthy)
         and sym not in already_open
         and sym not in already_pending
-        and ("npc" not in sids or len(sids) > 1)   # never queue NPC-only stocks
+        and ("npc" not in sids or len(sids) > 1)
     }
 
 
@@ -130,15 +130,10 @@ def _empty() -> dict:
 
 def queue_candidates(data: dict, scan_results: dict, scan_date: str,
                      market_healthy: bool) -> list:
-    """
-    Called at 6 PM. Filters scan results using swing-trading
-    qualification rules and queues stocks for next morning's entry.
-    Returns list of newly queued symbols.
-    """
     s            = data["settings"]
     already_open = {p["symbol"] for p in data["positions"] if p["status"] == "open"}
 
-    # NPC: exit alert on open positions (not an entry signal)
+    # NPC: exit alert on open positions
     npc_syms = set(scan_results.get("npc", []))
     npc_open = npc_syms & already_open
     if npc_open:
@@ -179,18 +174,13 @@ def queue_candidates(data: dict, scan_results: dict, scan_date: str,
 # ── Morning job (9:20 AM): enter pending at open price ───────────────────────
 
 def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
-    """
-    Called at 9:20 AM. Takes pending queue, fetches open prices,
-    sets ATR-based SL/target, and creates real position entries.
-    Returns list of entered trades.
-    """
-    s       = data["settings"]
-    pending = data.get("pending", [])
+    s        = data["settings"]
+    pending  = data.get("pending", [])
     if not pending:
         log.info("No pending trades to enter.")
         return []
 
-    entered      = []
+    entered       = []
     still_pending = []
 
     for item in pending:
@@ -252,10 +242,9 @@ def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
     return entered
 
 
-# ── Evening job: update current prices on open positions ─────────────────────
+# ── Evening: update current prices on open positions ─────────────────────────
 
 def update_prices(data: dict, prices: dict):
-    """Update currentPrice on all open positions."""
     for p in data["positions"]:
         if p["status"] != "open":
             continue
