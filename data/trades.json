@@ -1,6 +1,240 @@
 {
   "positions": [],
-  "pending": [],
+  "pending": [
+    {
+      "symbol": "PAGEIND",
+      "scans": [
+        "champion-d",
+        "contraction",
+        "indstrong",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.072601"
+    },
+    {
+      "symbol": "HONAUT",
+      "scans": [
+        "champion-d",
+        "contraction",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.072643"
+    },
+    {
+      "symbol": "POWERINDIA",
+      "scans": [
+        "bigmover",
+        "champion-d",
+        "champion-w",
+        "contraction",
+        "indstrong",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.072668"
+    },
+    {
+      "symbol": "NEULANDLAB",
+      "scans": [
+        "champion-d",
+        "contraction",
+        "indstrong",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.072708"
+    },
+    {
+      "symbol": "APARINDS",
+      "scans": [
+        "bigmover",
+        "champion-d",
+        "champion-w",
+        "contraction",
+        "indstrong",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.072748"
+    },
+    {
+      "symbol": "ZFCVINDIA",
+      "scans": [
+        "champion-d",
+        "champion-w",
+        "contraction",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.072801"
+    },
+    {
+      "symbol": "CRAFTSMAN",
+      "scans": [
+        "champion-d",
+        "champion-w",
+        "contraction",
+        "indstrong",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.072847"
+    },
+    {
+      "symbol": "MTARTECH",
+      "scans": [
+        "bigmover",
+        "champion-d",
+        "champion-w",
+        "contraction",
+        "indstrong",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.072894"
+    },
+    {
+      "symbol": "ABB",
+      "scans": [
+        "champion-d",
+        "champion-w",
+        "contraction",
+        "indstrong",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.072936"
+    },
+    {
+      "symbol": "GRWRHITECH",
+      "scans": [
+        "bigmover",
+        "champion-d",
+        "champion-w",
+        "contraction",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.072976"
+    },
+    {
+      "symbol": "CUMMINSIND",
+      "scans": [
+        "champion-d",
+        "champion-w",
+        "contraction",
+        "indstrong",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.073005"
+    },
+    {
+      "symbol": "GVT&D",
+      "scans": [
+        "bigmover",
+        "champion-d",
+        "champion-w",
+        "contraction",
+        "indstrong",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.073029"
+    },
+    {
+      "symbol": "NETWEB",
+      "scans": [
+        "bigmover",
+        "champion-d",
+        "champion-w",
+        "contraction",
+        "indstrong",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.073057"
+    },
+    {
+      "symbol": "AIAENG",
+      "scans": [
+        "champion-d",
+        "champion-w",
+        "contraction",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.073081"
+    },
+    {
+      "symbol": "KIRLOSIND",
+      "scans": [
+        "champion-d"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.073105"
+    },
+    {
+      "symbol": "FLUOROCHEM",
+      "scans": [
+        "champion-d",
+        "contraction",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.073129"
+    },
+    {
+      "symbol": "ENRIN",
+      "scans": [
+        "bigmover",
+        "champion-d",
+        "champion-w",
+        "contraction",
+        "indstrong",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.073193"
+    },
+    {
+      "symbol": "SIEMENS",
+      "scans": [
+        "champion-d",
+        "champion-w",
+        "contraction",
+        "indstrong",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.073223"
+    },
+    {
+      "symbol": "TIMKEN",
+      "scans": [
+        "champion-d",
+        "champion-w",
+        "contraction",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.073249"
+    },
+    {
+      "symbol": "CPPLUS",
+      "scans": [
+        "bigmover",
+        "champion-d",
+        "contraction",
+        "indstrong",
+        "ppc"
+      ],
+      "scanDate": "2026-06-19",
+      "queuedAt": "2026-06-19T04:06:58.073273"
+    }
+  ],
   "equity_curve": [
     {
       "date": "2026-05-03",
@@ -140,6 +374,10 @@
     },
     {
       "date": "2026-06-18",
+      "pnl": 0
+    },
+    {
+      "date": "2026-06-19",
       "pnl": 0
     }
   ],
