@@ -1,21 +1,17 @@
 """chartink.py — scrapes all scan results from Chartink's internal API.
 
-ROOT CAUSE FIX (June 2026):
-Chartink's parser rejects "N day ago daily X" syntax — the timeframe
-prefix (daily/weekly) must be DROPPED on the historical (ago) operand.
+SCAN QUALITY FIX (June 2026):
+- Contraction: added explicit range-contraction filters (ATR shrinking)
+  and SMA-trending-up checks. Was returning 750+ stocks; should now
+  return 50-150 on a typical day.
+- PPC: tightened volume to 2x 20-day average (was 1.5x on any of 3
+  windows). Added 50 DMA trending up + must be above 100 DMA.
+  Was returning 888 stocks; should now return 20-80 on a typical day.
 
-WRONG:  daily close > 1 day ago daily close
-RIGHT:  daily close > 1 day ago close
-
-WRONG:  daily sma( daily close ,50 ) < 1 day ago daily sma( daily close ,50 )
-RIGHT:  daily sma( daily close ,50 ) < 1 day ago sma( daily close ,50 )
-
-This single rule fix was missing across ALL scan clauses for 6+ weeks,
-causing every quality scan (Champion D/W, Contraction, PPC, NPC,
-India Strong) to return scan_error and 0 stocks. Only Big Movers was
-unaffected because it contains no historical comparisons.
-
-All clauses below have been corrected accordingly.
+SYNTAX FIX (June 2026, applied to all clauses):
+  WRONG: daily close > 1 day ago daily close
+  RIGHT: daily close > 1 day ago close
+  (drop the timeframe prefix on the historical/ago operand)
 """
 
 import os, time, logging, requests
@@ -41,7 +37,9 @@ H_LOGIN = {
 }
 
 SCANS = {
-    # Champion Daily — fixed: "1 day ago close" (not "1 day ago daily close")
+    # ── Champion Daily ────────────────────────────────────────────────────────
+    # Close above 20 & 50 DMA, 20 DMA above 50 DMA, closed up vs yesterday,
+    # ATR expanding (momentum present), close in top 30% of today's range.
     "champion-d": {
         "label": "Champion Daily",
         "scan_clause": (
@@ -57,7 +55,8 @@ SCANS = {
         ),
     },
 
-    # Champion Weekly — fixed: "1 week ago close" (not "1 week ago weekly close")
+    # ── Champion Weekly ───────────────────────────────────────────────────────
+    # Same logic on weekly timeframe — strongest trend signal in the system.
     "champion-w": {
         "label": "Champion Weekly",
         "scan_clause": (
@@ -73,47 +72,52 @@ SCANS = {
         ),
     },
 
-    # Contraction — fixed: "1 day ago sma(...)" (not "1 day ago daily sma(...)")
+    # ── Contraction (TIGHTENED) ───────────────────────────────────────────────
+    # Stock in uptrend (above 50 DMA, both 20 & 50 DMA trending up day-over-day)
+    # AND range explicitly contracting:
+    #   - 5-day ATR < 20-day ATR  (coiling over the past week vs past month)
+    #   - today's ATR < 10-day ATR (today itself is a tight/narrow day)
+    # This is the classic coiling-spring setup before a breakout.
+    # Expected: 50-150 stocks on a typical trending market day.
     "contraction": {
         "label": "Contraction",
         "scan_clause": (
             "( {cash} "
             "( daily sma( daily volume * daily close ,100 ) > 100000000 "
             "and daily sma( daily volume * daily close ,20 ) > 100000000 ) "
-            "and not ( "
-            "daily countstreak( 20 , daily sma( daily close ,20 ) < daily sma( daily close ,50 ) ) >= 20 "
-            "or daily sma( daily close ,50 ) < 1 day ago sma( daily close ,50 ) "
-            "or daily close < daily sma( daily close ,50 ) - daily avg true range( 50 ) "
-            "or daily close < daily sma( daily close ,50 ) ) "
+            "and daily close > daily sma( daily close ,50 ) "
+            "and daily sma( daily close ,50 ) > 1 day ago sma( daily close ,50 ) "
+            "and daily close > daily sma( daily close ,20 ) "
+            "and daily sma( daily close ,20 ) > 1 day ago sma( daily close ,20 ) "
+            "and daily avg true range( 5 ) < daily avg true range( 20 ) "
+            "and daily avg true range( 1 ) < daily avg true range( 10 ) "
             "and ( daily close > daily sma( daily close ,100 ) "
             "or daily close > daily sma( daily close ,200 ) ) )"
         ),
     },
 
-    # PPC — fixed: "1 day ago sma(...)" and "1 day ago close"
+    # ── PPC (TIGHTENED) ───────────────────────────────────────────────────────
+    # Institutional accumulation day: stock in uptrend, volume is 2x the
+    # 20-day average (was 1.5x on any of 3 windows — too loose), ATR expanding
+    # confirms the volume is real momentum not just noise, closed up vs yesterday.
+    # Expected: 20-80 stocks on a typical day.
     "ppc": {
         "label": "PPC",
         "scan_clause": (
             "( {cash} "
             "( daily sma( daily volume * daily close ,20 ) > 100000000 "
             "and daily sma( daily volume * daily close ,100 ) > 100000000 ) "
-            "and not ( "
-            "daily countstreak( 20 , daily sma( daily close ,20 ) < daily sma( daily close ,50 ) ) >= 20 "
-            "or daily sma( daily close ,50 ) < 1 day ago sma( daily close ,50 ) "
-            "or daily close < daily sma( daily close ,50 ) "
-            "or daily close < daily sma( daily close ,50 ) - daily avg true range( 50 ) ) "
-            "and ( daily close > daily sma( daily close ,100 ) "
-            "or daily close > daily sma( daily close ,200 ) ) "
-            "and ( daily volume > daily sma( daily volume ,5 ) * 1.5 "
-            "or daily volume > daily sma( daily volume ,20 ) * 1.5 "
-            "or daily volume > daily sma( daily volume ,100 ) * 1.5 ) "
+            "and daily close > daily sma( daily close ,50 ) "
+            "and daily sma( daily close ,50 ) > 1 day ago sma( daily close ,50 ) "
+            "and daily close > daily sma( daily close ,100 ) "
             "and daily close > 1 day ago close "
-            "and ( daily avg true range( 1 ) > daily avg true range( 20 ) * 1.5 "
-            "or daily avg true range( 1 ) > daily avg true range( 5 ) * 1.5 ) )"
+            "and daily volume > daily sma( daily volume ,20 ) * 2.0 "
+            "and daily avg true range( 1 ) > daily avg true range( 20 ) * 1.5 )"
         ),
     },
 
-    # NPC — fixed: "1 day ago close" and "1 day ago sma(...)"
+    # ── NPC ───────────────────────────────────────────────────────────────────
+    # High-volume down day — used as exit alert on open positions, not entry.
     "npc": {
         "label": "NPC",
         "scan_clause": (
@@ -130,7 +134,9 @@ SCANS = {
         ),
     },
 
-    # Big Movers — unchanged (no historical comparisons, was already working)
+    # ── Big Movers ────────────────────────────────────────────────────────────
+    # Stock trading well above its 126-day low with good liquidity.
+    # No historical comparison — was the only working scan for 6 weeks.
     "bigmover": {
         "label": "Big Movers",
         "scan_clause": (
@@ -141,7 +147,9 @@ SCANS = {
         ),
     },
 
-    # India Strong — fixed: "1 day ago sma(...)"
+    # ── India Strong ──────────────────────────────────────────────────────────
+    # Large-cap quality filter: very high liquidity (500M turnover),
+    # in uptrend, not extended, not in a long downtrend.
     "indstrong": {
         "label": "India Strong",
         "scan_clause": (
@@ -163,7 +171,9 @@ SCANS = {
         ),
     },
 
-    # New Stocks — fixed: "120 days ago close" (not "120 days ago daily close")
+    # ── New Stocks (IPO) ──────────────────────────────────────────────────────
+    # Stocks listed in the last 120 days — excluded from entry qualification
+    # (no ATR history), kept for dashboard visibility only.
     "newstock": {
         "label": "New Stocks (IPO)",
         "scan_clause": (
