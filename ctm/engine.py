@@ -3,14 +3,20 @@ engine.py
 Paper trade engine with:
   - Pending queue: stocks identified at 6 PM, entered next morning at open
   - ATR-based SL (2x ATR) and Target (4x ATR)
-  - Swing-trading scan qualification rules (replaces MIN_SCANS)
+  - Swing-trading scan qualification rules
 
-QUALIFICATION FIX (June 2026):
-  Removed "contraction" as a standalone Tier 2 qualifier.
-  Contraction alone was qualifying 300+ stocks. It already appears in
-  Tier 1 combined with champion-d (the best swing setup), so standalone
-  contraction adds noise without signal quality. PPC alone kept in Tier 2
-  since it's a high-specificity event (volume surge + ATR expansion).
+QUALIFICATION LOGIC (final, June 2026):
+  Philosophy: a stock needs at least TWO independent signals confirming
+  it before entry. One scan passing alone (except Champion Weekly in a
+  healthy market) is insufficient for a high-quality swing pick.
+
+  Expected output:
+    Good trending market day  : 5-20 candidates
+    Choppy/mixed market day   : 0-5 candidates
+    Unhealthy market (below 200 DMA): 0-3 candidates (Tier 1 only)
+
+  This replaces the previous logic where Champion Daily alone (365 stocks)
+  qualified, flooding the queue with low-conviction entries.
 """
 
 import json, os, time, datetime, logging
@@ -25,30 +31,36 @@ FB_SL_PCT  = 5.0    # fallback SL % if ATR unavailable
 FB_TGT_PCT = 10.0   # fallback target % if ATR unavailable
 
 
-# ── Swing trading scan qualification rules ────────────────────────────────────
-
-# Tier 1: queue regardless of Nifty health (high conviction setups)
+# ── Swing trading qualification rules ─────────────────────────────────────────
+#
+# TIER 1: queue regardless of Nifty health
+# These are the highest-conviction setups — two or more independent
+# signals confirming each other. Enter even in a weak market.
+#
 TIER1_COMBOS = [
-    {"champion-w"},                   # weekly trend intact — strongest signal
-    {"champion-d", "contraction"},    # trending + coiling near highs = best swing
-    {"champion-d", "bigmover"},       # trend confirmed by 6-month breakout
-    {"champion-d", "indstrong"},      # quality large-cap in uptrend
+    {"champion-w", "champion-d"},   # weekly + daily trend both confirmed — best possible
+    {"champion-d", "contraction"},  # uptrend + coiling near highs — classic swing base
+    {"champion-d", "ppc"},          # uptrend + institutional volume surge today
+    {"champion-d", "indstrong"},    # quality large-cap confirmed in daily uptrend
 ]
 
-# Tier 2: queue only when Nifty is healthy (good but need market tailwind)
-# NOTE: "contraction" removed as standalone — too broad (300+ stocks).
-# It qualifies only via Tier 1 combo with champion-d.
+# TIER 2: queue only when Nifty is healthy (above 200 DMA)
+# Slightly lower conviction — single strong signal or less-common combo.
+# Needs market tailwind to act on.
+#
 TIER2_COMBOS = [
-    {"champion-d"},    # daily trend alone — ~200-400 stocks, filtered by market health
-    {"ppc"},           # institutional volume buying — high-specificity event (~10-30 stocks)
+    {"champion-w"},              # weekly trend intact — strong standalone in healthy market
+    {"ppc", "indstrong"},        # institutional buying in quality large-cap
+    {"champion-d", "bigmover"},  # daily trend + 6-month breakout level
 ]
 
-# Excluded from entry qualification:
-#   contraction alone — too broad standalone, only used in combo (Tier 1)
-#   bigmover alone    — noise, not signal
-#   indstrong alone   — quality filter, not a trigger
-#   npc               — repurposed as exit alert on open positions
-#   newstock          — IPOs lack ATR history
+# NEVER queue standalone:
+#   champion-d alone  — 300-400 stocks on any rally day, no confirmation
+#   contraction alone — coiling but daily trend not confirmed
+#   bigmover alone    — noise, no trend filter
+#   indstrong alone   — quality screener, not an entry trigger
+#   npc               — exit alert only, not an entry
+#   newstock          — IPOs have no ATR history for SL/target calculation
 
 
 def _qualifies(scans_set: set, market_healthy: bool) -> bool:
@@ -64,7 +76,7 @@ def _qualifies(scans_set: set, market_healthy: bool) -> bool:
 
 
 def qualified_candidates(data: dict, scan_results: dict, market_healthy: bool) -> dict:
-    """Return symbol -> scan ids for candidates that pass entry rules."""
+    """Return {symbol: scan_ids} for candidates that pass entry rules."""
     already_open    = {p["symbol"] for p in data["positions"] if p["status"] == "open"}
     already_pending = {p["symbol"] for p in data.get("pending", [])}
 
@@ -78,7 +90,7 @@ def qualified_candidates(data: dict, scan_results: dict, market_healthy: bool) -
         if _qualifies(sids, market_healthy)
         and sym not in already_open
         and sym not in already_pending
-        and ("npc" not in sids or len(sids) > 1)
+        and ("npc" not in sids or len(sids) > 1)   # never queue NPC-only stocks
     }
 
 
@@ -123,10 +135,10 @@ def queue_candidates(data: dict, scan_results: dict, scan_date: str,
     qualification rules and queues stocks for next morning's entry.
     Returns list of newly queued symbols.
     """
-    s = data["settings"]
+    s            = data["settings"]
     already_open = {p["symbol"] for p in data["positions"] if p["status"] == "open"}
 
-    # NPC: exit alert on open positions
+    # NPC: exit alert on open positions (not an entry signal)
     npc_syms = set(scan_results.get("npc", []))
     npc_open = npc_syms & already_open
     if npc_open:
@@ -178,7 +190,7 @@ def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
         log.info("No pending trades to enter.")
         return []
 
-    entered = []
+    entered      = []
     still_pending = []
 
     for item in pending:
@@ -191,8 +203,8 @@ def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
 
         atr = atrs.get(sym)
         if atr:
-            sl  = round(px - ATR_SL  * atr, 2)
-            tgt = round(px + ATR_TGT * atr, 2)
+            sl      = round(px - ATR_SL  * atr, 2)
+            tgt     = round(px + ATR_TGT * atr, 2)
             sl_pct  = round((px - sl)  / px * 100, 2)
             tgt_pct = round((tgt - px) / px * 100, 2)
             log.info("  ATR=%.2f  SL=%.1f%% below  TGT=%.1f%% above", atr, sl_pct, tgt_pct)
