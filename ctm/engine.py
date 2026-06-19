@@ -4,6 +4,13 @@ Paper trade engine with:
   - Pending queue: stocks identified at 6 PM, entered next morning at open
   - ATR-based SL (2x ATR) and Target (4x ATR)
   - Swing-trading scan qualification rules (replaces MIN_SCANS)
+
+QUALIFICATION FIX (June 2026):
+  Removed "contraction" as a standalone Tier 2 qualifier.
+  Contraction alone was qualifying 300+ stocks. It already appears in
+  Tier 1 combined with champion-d (the best swing setup), so standalone
+  contraction adds noise without signal quality. PPC alone kept in Tier 2
+  since it's a high-specificity event (volume surge + ATR expansion).
 """
 
 import json, os, time, datetime, logging
@@ -18,28 +25,30 @@ FB_SL_PCT  = 5.0    # fallback SL % if ATR unavailable
 FB_TGT_PCT = 10.0   # fallback target % if ATR unavailable
 
 
-# â”€â”€ Swing trading scan qualification rules â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-#
+# ── Swing trading scan qualification rules ────────────────────────────────────
+
 # Tier 1: queue regardless of Nifty health (high conviction setups)
 TIER1_COMBOS = [
-    {"champion-w"},                   # weekly trend intact â€” strongest signal
-    {"champion-d", "contraction"},    # trending + coiling = classic swing entry
+    {"champion-w"},                   # weekly trend intact — strongest signal
+    {"champion-d", "contraction"},    # trending + coiling near highs = best swing
     {"champion-d", "bigmover"},       # trend confirmed by 6-month breakout
     {"champion-d", "indstrong"},      # quality large-cap in uptrend
 ]
 
 # Tier 2: queue only when Nifty is healthy (good but need market tailwind)
+# NOTE: "contraction" removed as standalone — too broad (300+ stocks).
+# It qualifies only via Tier 1 combo with champion-d.
 TIER2_COMBOS = [
-    {"champion-d"},                   # daily trend alone
-    {"ppc"},                          # institutional volume buying
-    {"contraction"},                  # coiling in uptrend
+    {"champion-d"},    # daily trend alone — ~200-400 stocks, filtered by market health
+    {"ppc"},           # institutional volume buying — high-specificity event (~10-30 stocks)
 ]
 
 # Excluded from entry qualification:
-#   bigmover alone  â€” noise, not signal
-#   indstrong alone â€” quality filter, not a trigger
-#   npc             â€” repurposed as exit alert on open positions
-#   newstock        â€” IPOs lack ATR history
+#   contraction alone — too broad standalone, only used in combo (Tier 1)
+#   bigmover alone    — noise, not signal
+#   indstrong alone   — quality filter, not a trigger
+#   npc               — repurposed as exit alert on open positions
+#   newstock          — IPOs lack ATR history
 
 
 def _qualifies(scans_set: set, market_healthy: bool) -> bool:
@@ -69,7 +78,7 @@ def qualified_candidates(data: dict, scan_results: dict, market_healthy: bool) -
         if _qualifies(sids, market_healthy)
         and sym not in already_open
         and sym not in already_pending
-        and ("npc" not in sids or len(sids) > 1)    # never queue NPC-only stocks
+        and ("npc" not in sids or len(sids) > 1)
     }
 
 
@@ -79,7 +88,6 @@ def load(data_file: str) -> dict:
         return _empty()
     with open(data_file) as f:
         d = json.load(f)
-    # Ensure all keys exist (forward compat)
     for k, v in _empty().items():
         if k not in d:
             d[k] = v
@@ -95,7 +103,7 @@ def save(data: dict, data_file: str):
 def _empty() -> dict:
     return {
         "positions":    [],
-        "pending":      [],    # stocks queued for next morning entry
+        "pending":      [],
         "equity_curve": [],
         "settings": {
             "posSize":  POS_SIZE,
@@ -106,7 +114,7 @@ def _empty() -> dict:
     }
 
 
-# â”€â”€ Evening job (6 PM): queue candidates â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Evening job (6 PM): queue candidates ─────────────────────────────────────
 
 def queue_candidates(data: dict, scan_results: dict, scan_date: str,
                      market_healthy: bool) -> list:
@@ -118,32 +126,30 @@ def queue_candidates(data: dict, scan_results: dict, scan_date: str,
     s = data["settings"]
     already_open = {p["symbol"] for p in data["positions"] if p["status"] == "open"}
 
-    # NPC: repurpose as exit alert on open positions (not an entry signal)
+    # NPC: exit alert on open positions
     npc_syms = set(scan_results.get("npc", []))
     npc_open = npc_syms & already_open
     if npc_open:
-        log.warning("NPC alert (high-volume down day) on open positions â€” review exits: %s",
+        log.warning("NPC alert (high-volume down day) on open positions — review exits: %s",
                     ", ".join(sorted(npc_open)))
 
-    # Qualify candidates using swing trading rules
     qualified = qualified_candidates(data, scan_results, market_healthy)
 
     if not market_healthy:
-        log.info("Market unhealthy (Nifty below 200 DMA) â€” only Tier 1 setups qualify.")
+        log.info("Market unhealthy (Nifty below 200 DMA) — only Tier 1 setups qualify.")
 
-    log.info("Candidates qualified: %d stocks â€” %s",
+    log.info("Candidates qualified: %d stocks — %s",
              len(qualified),
              ", ".join(
                  f"{sym}({','.join(sorted(sids))})"
                  for sym, sids in qualified.items()
              ) if qualified else "none")
 
-    # Queue up to position limit
     queued = []
     for sym, sids in qualified.items():
         n_open = sum(1 for p in data["positions"] if p["status"] == "open")
         if n_open + len(data.get("pending", [])) >= s["maxPos"]:
-            log.info("Position limit reached (%d) â€” not queuing more.", s["maxPos"])
+            log.info("Position limit reached (%d) — not queuing more.", s["maxPos"])
             break
         entry = {
             "symbol":   sym,
@@ -158,7 +164,7 @@ def queue_candidates(data: dict, scan_results: dict, scan_date: str,
     return queued
 
 
-# â”€â”€ Morning job (9:20 AM): enter pending at open price â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Morning job (9:20 AM): enter pending at open price ───────────────────────
 
 def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
     """
@@ -179,7 +185,7 @@ def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
         sym = item["symbol"]
         px  = open_prices.get(sym)
         if not px:
-            log.warning("No open price for %s â€” keeping in queue for tomorrow.", sym)
+            log.warning("No open price for %s — keeping in queue for tomorrow.", sym)
             still_pending.append(item)
             continue
 
@@ -191,19 +197,17 @@ def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
             tgt_pct = round((tgt - px) / px * 100, 2)
             log.info("  ATR=%.2f  SL=%.1f%% below  TGT=%.1f%% above", atr, sl_pct, tgt_pct)
         else:
-            # Fallback to fixed % if ATR unavailable
             sl  = round(px * (1 - FB_SL_PCT  / 100), 2)
             tgt = round(px * (1 + FB_TGT_PCT / 100), 2)
-            log.warning("  No ATR for %s â€” using fixed SL/TGT", sym)
+            log.warning("  No ATR for %s — using fixed SL/TGT", sym)
 
-        # Safety: SL must be below entry, TGT above
         if sl >= px or tgt <= px:
-            log.warning("  Invalid SL/TGT for %s â€” skipping", sym)
+            log.warning("  Invalid SL/TGT for %s — skipping", sym)
             continue
 
         qty = int(s["posSize"] / px)
         if qty < 1:
-            log.warning("  Position size too small for %s at Rs%.2f â€” skipping", sym, px)
+            log.warning("  Position size too small for %s at Rs%.2f — skipping", sym, px)
             continue
 
         trade = {
@@ -212,7 +216,7 @@ def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
             "scans":        item["scans"],
             "scanDate":     item["scanDate"],
             "entryDate":    datetime.date.today().isoformat(),
-            "entryType":    "open",           # entered at market open
+            "entryType":    "open",
             "entryPrice":   round(px, 2),
             "currentPrice": round(px, 2),
             "atr":          atr,
@@ -236,7 +240,7 @@ def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
     return entered
 
 
-# â”€â”€ Evening job: update current prices on open positions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Evening job: update current prices on open positions ─────────────────────
 
 def update_prices(data: dict, prices: dict):
     """Update currentPrice on all open positions."""
@@ -248,7 +252,7 @@ def update_prices(data: dict, prices: dict):
             p["currentPrice"] = round(px, 2)
 
 
-# â”€â”€ Check SL / Target exits â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Check SL / Target exits ───────────────────────────────────────────────────
 
 def check_exits(data: dict, prices: dict) -> list:
     closed = []
@@ -276,7 +280,7 @@ def check_exits(data: dict, prices: dict) -> list:
     return closed
 
 
-# â”€â”€ Equity curve â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# ── Equity curve ──────────────────────────────────────────────────────────────
 
 def update_equity_curve(data: dict):
     closed = [p for p in data["positions"] if p["status"] == "closed"]
