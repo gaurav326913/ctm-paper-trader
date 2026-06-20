@@ -98,9 +98,7 @@ def qualified_candidates(data: dict, scan_results: dict, market_healthy: bool) -
         if _qualifies(sids, market_healthy)
         and sym not in already_open
         and sym not in already_pending
-        and ("npc" not in sids or len(sids) > 1)  # currently a no-op: no combo
-                                                    # is satisfied by npc alone,
-                                                    # kept as a documented guard
+        and "npc" not in sids
     }
 
 
@@ -127,6 +125,7 @@ def _empty() -> dict:
         "positions":    [],
         "pending":      [],
         "equity_curve": [],
+        "last_run":     {},
         "settings": {
             "posSize":  POS_SIZE,
             "maxPos":   MAX_POS,
@@ -136,19 +135,45 @@ def _empty() -> dict:
     }
 
 
+# ── Risk flags ────────────────────────────────────────────────────────────────
+
+def apply_npc_risk_flags(data: dict, scan_results: dict) -> list:
+    """
+    Mark open positions that appear in the NPC scan.
+
+    This is intentionally a warning flag only. The system does not auto-exit on
+    NPC yet; it records the alert so the dashboard/reporting can highlight risk
+    while we observe how useful the signal is during the paper-trading test.
+    """
+    npc_syms = set(scan_results.get("npc", []))
+    flagged = []
+
+    for p in data.get("positions", []):
+        if p.get("status") != "open":
+            continue
+
+        if p.get("symbol") in npc_syms:
+            p["riskFlag"] = "NPC"
+            p["riskFlagDate"] = datetime.date.today().isoformat()
+            flagged.append(p["symbol"])
+        elif p.get("riskFlag") == "NPC":
+            # Clear stale NPC warnings when the symbol no longer appears in NPC.
+            p.pop("riskFlag", None)
+            p.pop("riskFlagDate", None)
+
+    if flagged:
+        log.warning("NPC risk flag on open positions: %s", ", ".join(sorted(flagged)))
+    return flagged
+
+
 # ── Evening job (6 PM): queue candidates ─────────────────────────────────────
 
 def queue_candidates(data: dict, scan_results: dict, scan_date: str,
                      market_healthy: bool) -> list:
-    s            = data["settings"]
-    already_open = {p["symbol"] for p in data["positions"] if p["status"] == "open"}
+    s = data["settings"]
 
-    # NPC: exit alert on open positions
-    npc_syms = set(scan_results.get("npc", []))
-    npc_open = npc_syms & already_open
-    if npc_open:
-        log.warning("NPC alert (high-volume down day) on open positions — review exits: %s",
-                    ", ".join(sorted(npc_open)))
+    # NPC is a risk flag on open positions, not an entry signal.
+    apply_npc_risk_flags(data, scan_results)
 
     qualified = qualified_candidates(data, scan_results, market_healthy)
 
@@ -185,7 +210,7 @@ def queue_candidates(data: dict, scan_results: dict, scan_date: str,
     return queued
 
 
-# ── Morning job (9:20 AM): enter pending at open price ───────────────────────
+# ── Morning job (9:20 AM): enter pending at morning quote ─────────────────────
 
 def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
     s        = data["settings"]
@@ -201,7 +226,7 @@ def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
         sym = item["symbol"]
         px  = open_prices.get(sym)
         if not px:
-            log.warning("No open price for %s — keeping in queue for tomorrow.", sym)
+            log.warning("No entry price for %s — keeping in queue for tomorrow.", sym)
             still_pending.append(item)
             continue
 
@@ -232,7 +257,7 @@ def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
             "scans":        item["scans"],
             "scanDate":     item["scanDate"],
             "entryDate":    datetime.date.today().isoformat(),
-            "entryType":    "open",
+            "entryType":    "morning_quote",
             "entryPrice":   round(px, 2),
             "currentPrice": round(px, 2),
             "atr":          atr,
@@ -241,6 +266,8 @@ def enter_pending(data: dict, open_prices: dict, atrs: dict) -> list:
             "qty":          qty,
             "invested":     round(px * qty, 2),
             "status":       "open",
+            "riskFlag":     None,
+            "riskFlagDate": None,
             "exitPrice":    None,
             "exitDate":     None,
             "exitReason":   None,
@@ -286,6 +313,8 @@ def check_exits(data: dict, prices: dict) -> list:
             "exitPrice":  round(px, 2),
             "exitDate":   datetime.date.today().isoformat(),
             "exitReason": reason,
+            "riskFlag":   None,
+            "riskFlagDate": None,
             "pnl":        round((px - p["entryPrice"]) * p["qty"], 2),
             "pnlPct":     round((px - p["entryPrice"]) / p["entryPrice"] * 100, 2),
         })
