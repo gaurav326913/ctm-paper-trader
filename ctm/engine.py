@@ -5,15 +5,20 @@ Paper trade engine with:
   - ATR-based SL (2x ATR) and Target (4x ATR)
   - Swing-trading scan qualification rules
 
-QUALIFICATION LOGIC (final v2, June 2026):
+QUALIFICATION LOGIC (final v3, June 2026):
 
-Philosophy: Champion Daily is the anchor. Almost nothing qualifies
-without it. This ensures every pick has confirmed daily momentum
-PLUS at least one additional signal.
+Philosophy: Champion Daily is the anchor. NOTHING qualifies without it.
+This ensures every pick has confirmed daily momentum PLUS at least one
+additional signal. (v2 had a loophole: Tier 2 {ppc, indstrong} bypassed
+the anchor entirely — removed in v3, same failure mode as the old
+170-candidate standalone-Champion-Weekly bug, just relocated.)
 
 Champion Weekly alone removed from Tier 2 — was letting 170 stocks
 through on strong market days. Weekly is now only used in combo
 with Daily (Tier 1), where it's the highest-conviction setup.
+
+Within the position cap, candidates are prioritized by signal count
+(more confirming scans = queued first) rather than arbitrary dict order.
 
 Expected output:
   Strong bull day   : 20-60 candidates (capped at MAX_POSITIONS=20)
@@ -47,10 +52,11 @@ TIER1_COMBOS = [
 ]
 
 # Tier 2: queue only when Nifty healthy (above 200 DMA)
-# Champion Weekly standalone removed — too broad (170 stocks on bull days).
-# Only high-specificity combos remain here.
+# Still anchored to Champion Daily — only the SECOND confirming signal
+# changes vs Tier 1. {ppc, indstrong} removed: it had no champion-d
+# requirement at all and could spike candidate count on high-volume
+# rally days (same root cause as the old champion-w standalone bug).
 TIER2_COMBOS = [
-    {"ppc", "indstrong"},           # institutional buying in quality large-cap
     {"champion-d", "bigmover"},     # daily trend + 6-month breakout level
 ]
 
@@ -60,6 +66,8 @@ TIER2_COMBOS = [
 #   contraction alone — coiling without daily trend confirmation
 #   bigmover alone    — noise, no trend filter
 #   indstrong alone   — quality screener, not an entry trigger
+#   ppc + indstrong (no champion-d) — institutional volume without
+#       confirmed trend; removed in v3, see TIER2 comment above
 #   npc               — exit alert on open positions only
 #   newstock          — IPOs lack ATR history
 
@@ -90,7 +98,9 @@ def qualified_candidates(data: dict, scan_results: dict, market_healthy: bool) -
         if _qualifies(sids, market_healthy)
         and sym not in already_open
         and sym not in already_pending
-        and ("npc" not in sids or len(sids) > 1)
+        and ("npc" not in sids or len(sids) > 1)  # currently a no-op: no combo
+                                                    # is satisfied by npc alone,
+                                                    # kept as a documented guard
     }
 
 
@@ -152,8 +162,12 @@ def queue_candidates(data: dict, scan_results: dict, scan_date: str,
                  for sym, sids in qualified.items()
              ) if qualified else "none")
 
+    # Prioritize by signal strength (more confirming scans first) so the
+    # best setups get queued before hitting the position cap on busy days.
+    ranked = sorted(qualified.items(), key=lambda kv: len(kv[1]), reverse=True)
+
     queued = []
-    for sym, sids in qualified.items():
+    for sym, sids in ranked:
         n_open = sum(1 for p in data["positions"] if p["status"] == "open")
         if n_open + len(data.get("pending", [])) >= s["maxPos"]:
             log.info("Position limit reached (%d) — not queuing more.", s["maxPos"])
