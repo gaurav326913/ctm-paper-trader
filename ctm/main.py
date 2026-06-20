@@ -3,6 +3,12 @@ main.py
 Detects whether it's the morning run (9:20 AM IST) or evening run (6 PM IST)
 and executes the appropriate job.
 
+Manual override (for local testing — does NOT affect the scheduled GH Actions
+cron runs, which call `python main.py` with no args):
+  python main.py evening        # force evening job
+  python main.py morning        # force morning job
+  CTM_FORCE_RUN=evening python main.py   # same, via env var
+
 Evening (6 PM):
   1. Nifty health check
   2. Run Chartink scans
@@ -134,6 +140,22 @@ def run_morning():
 
 
 def main():
+    # Manual override for testing — doesn't affect the scheduled GH Actions
+    # cron runs, which call `python main.py` with no args/env var set.
+    forced = (os.environ.get("CTM_FORCE_RUN") or
+              (sys.argv[1] if len(sys.argv) > 1 else "")).strip().lower()
+
+    if forced in ("evening", "pm", "eve"):
+        log.info("Manual override: forcing EVENING run.")
+        run_evening()
+        return
+    if forced in ("morning", "am"):
+        log.info("Manual override: forcing MORNING run.")
+        run_morning()
+        return
+    if forced:
+        log.warning("Unrecognized CTM_FORCE_RUN/arg %r — falling back to time-based auto-detect.", forced)
+
     if is_morning_run():
         run_morning()
     else:
