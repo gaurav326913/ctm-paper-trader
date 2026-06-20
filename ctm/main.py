@@ -19,7 +19,7 @@ Evening (6 PM):
   7. Rebuild dashboard
 
 Morning (9:20 AM):
-  1. Enter pending trades at today's open price with ATR-based SL/target
+  1. Enter pending trades at latest available morning quote with ATR-based SL/target
   2. Rebuild dashboard
 """
 
@@ -41,10 +41,13 @@ sys.path.insert(0, ROOT)
 IST = pytz.timezone("Asia/Kolkata")
 
 
+def ist_now() -> datetime.datetime:
+    return datetime.datetime.now(IST)
+
+
 def is_morning_run() -> bool:
     """True if current IST time is before noon — morning entry run."""
-    now = datetime.datetime.now(IST)
-    return now.hour < 12
+    return ist_now().hour < 12
 
 
 def run_evening():
@@ -86,8 +89,24 @@ def run_evening():
     update_prices(data, prices)
     log.info("  Closed today: %d", len(closed))
 
-    log.info("Step 5/5: Queuing candidates for tomorrow's open...")
+    log.info("Step 5/5: Queuing candidates for tomorrow's morning entry...")
     queued = queue_candidates(data, scan_results, datetime.date.today().isoformat(), healthy)
+
+    data["last_run"] = {
+        "mode": "evening",
+        "ranAt": ist_now().strftime("%Y-%m-%d %H:%M:%S IST"),
+        "marketHealthy": healthy,
+        "scanHits": sum(len(v) for v in scan_results.values()),
+        "uniqueSymbols": len(all_syms),
+        "candidatesQualified": len(qualified),
+        "queued": len(queued),
+        "closed": len(closed),
+        "openPositions": sum(1 for p in data["positions"] if p["status"] == "open"),
+        "pendingAfter": len(data.get("pending", [])),
+        "npcFlags": [p["symbol"] for p in data["positions"]
+                     if p.get("status") == "open" and p.get("riskFlag") == "NPC"],
+        "blockedReason": "Evening scan completed. Candidates queued for the next morning entry run.",
+    }
 
     update_equity_curve(data)
     save(data, DATA_FILE)
@@ -102,7 +121,7 @@ def run_evening():
 
 
 def run_morning():
-    """9:20 AM job: enter pending trades at today's open price."""
+    """9:20 AM job: enter pending trades at latest available morning quote."""
     log.info("=" * 55)
     log.info("MORNING RUN — %s", datetime.date.today().strftime("%d %b %Y"))
     log.info("=" * 55)
@@ -114,15 +133,31 @@ def run_morning():
 
     data    = load(DATA_FILE)
     pending = data.get("pending", [])
+    pending_before = len(pending)
+    scan_results = {sid: [] for sid in SCANS}
 
     if not pending:
-        log.info("No pending trades — nothing to enter. Morning run complete.")
+        log.info("No pending trades — nothing to enter.")
+        data["last_run"] = {
+            "mode": "morning",
+            "ranAt": ist_now().strftime("%Y-%m-%d %H:%M:%S IST"),
+            "pendingBefore": 0,
+            "entered": 0,
+            "blockedReason": "No pending trades were available for the morning entry run.",
+        }
+        update_equity_curve(data)
+        save(data, DATA_FILE)
+        write_dash(data, scan_results, DOCS_PATH, True)
+        log.info("Dashboard updated.")
+        log.info("Morning run complete.")
         return
 
     symbols = [p["symbol"] for p in pending]
     log.info("Pending trades to enter: %d — %s", len(symbols), ", ".join(symbols))
 
-    log.info("Step 1/2: Fetching open prices + ATR...")
+    log.info("Step 1/2: Fetching entry prices + ATR...")
+    # This fetches the latest available NSE quote around the morning run time.
+    # It is not guaranteed to be the exchange's official open print.
     open_prices = get_closing_prices(symbols)
     atrs        = get_atrs(symbols)
 
@@ -130,10 +165,17 @@ def run_morning():
     entered = enter_pending(data, open_prices, atrs)
     log.info("  Entered: %d trades", len(entered))
 
+    data["last_run"] = {
+        "mode": "morning",
+        "ranAt": ist_now().strftime("%Y-%m-%d %H:%M:%S IST"),
+        "pendingBefore": pending_before,
+        "entered": len(entered),
+        "blockedReason": "Morning entry run completed using latest available NSE quote near run time.",
+    }
+
     update_equity_curve(data)
     save(data, DATA_FILE)
 
-    scan_results = {sid: [] for sid in SCANS}
     write_dash(data, scan_results, DOCS_PATH, True)
     log.info("Dashboard updated.")
     log.info("Morning run complete.")
