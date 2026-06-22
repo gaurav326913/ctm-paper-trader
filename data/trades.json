@@ -383,6 +383,10 @@
     {
       "date": "2026-06-20",
       "pnl": 0
+    },
+    {
+      "date": "2026-06-22",
+      "pnl": 0
     }
   ],
   "settings": {
@@ -393,10 +397,17 @@
     "atrTgt": 4.0
   },
   "last_run": {
-    "mode": "morning",
-    "ranAt": "18 Jun 2026, 06:15 IST",
-    "pendingBefore": 0,
-    "entered": 0,
-    "blockedReason": "No pending trades were available to enter."
+    "mode": "evening",
+    "ranAt": "2026-06-22 15:04:39 IST",
+    "marketHealthy": true,
+    "scanHits": 1081,
+    "uniqueSymbols": 757,
+    "candidatesQualified": 105,
+    "queued": 0,
+    "closed": 0,
+    "openPositions": 0,
+    "pendingAfter": 20,
+    "npcFlags": [],
+    "blockedReason": "Evening scan completed. Candidates queued for the next morning entry run."
   }
 }
