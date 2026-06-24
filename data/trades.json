@@ -391,6 +391,10 @@
     {
       "date": "2026-06-23",
       "pnl": 0
+    },
+    {
+      "date": "2026-06-24",
+      "pnl": 0
     }
   ],
   "settings": {
@@ -402,11 +406,11 @@
   },
   "last_run": {
     "mode": "evening",
-    "ranAt": "2026-06-23 21:06:46 IST",
+    "ranAt": "2026-06-24 12:33:04 IST",
     "marketHealthy": true,
-    "scanHits": 949,
-    "uniqueSymbols": 704,
-    "candidatesQualified": 61,
+    "scanHits": 955,
+    "uniqueSymbols": 703,
+    "candidatesQualified": 74,
     "queued": 0,
     "closed": 0,
     "openPositions": 0,
