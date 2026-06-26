@@ -399,6 +399,10 @@
     {
       "date": "2026-06-25",
       "pnl": 0
+    },
+    {
+      "date": "2026-06-26",
+      "pnl": 0
     }
   ],
   "settings": {
@@ -410,7 +414,7 @@
   },
   "last_run": {
     "mode": "evening",
-    "ranAt": "2026-06-25 20:56:17 IST",
+    "ranAt": "2026-06-26 13:09:18 IST",
     "marketHealthy": true,
     "scanHits": 918,
     "uniqueSymbols": 705,
