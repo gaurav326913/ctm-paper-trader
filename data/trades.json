@@ -461,10 +461,17 @@
     "atrTgt": 4.0
   },
   "last_run": {
-    "mode": "morning",
-    "ranAt": "2026-07-14 11:28:39 IST",
-    "pendingBefore": 20,
-    "entered": 0,
-    "blockedReason": "Morning entry run completed using latest available NSE quote near run time."
+    "mode": "evening",
+    "ranAt": "2026-07-14 19:56:27 IST",
+    "marketHealthy": true,
+    "scanHits": 939,
+    "uniqueSymbols": 726,
+    "candidatesQualified": 56,
+    "queued": 0,
+    "closed": 0,
+    "openPositions": 0,
+    "pendingAfter": 20,
+    "npcFlags": [],
+    "blockedReason": "Evening scan completed. Candidates queued for the next morning entry run."
   }
 }
