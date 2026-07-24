@@ -475,6 +475,10 @@
     {
       "date": "2026-07-23",
       "pnl": 0
+    },
+    {
+      "date": "2026-07-24",
+      "pnl": 0
     }
   ],
   "settings": {
@@ -485,17 +489,10 @@
     "atrTgt": 4.0
   },
   "last_run": {
-    "mode": "evening",
-    "ranAt": "2026-07-23 20:12:20 IST",
-    "marketHealthy": true,
-    "scanHits": 880,
-    "uniqueSymbols": 705,
-    "candidatesQualified": 39,
-    "queued": 0,
-    "closed": 0,
-    "openPositions": 0,
-    "pendingAfter": 20,
-    "npcFlags": [],
-    "blockedReason": "Evening scan completed. Candidates queued for the next morning entry run."
+    "mode": "morning",
+    "ranAt": "2026-07-24 11:44:52 IST",
+    "pendingBefore": 20,
+    "entered": 0,
+    "blockedReason": "Morning entry run completed using latest available NSE quote near run time."
   }
 }
