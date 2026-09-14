@@ -619,6 +619,10 @@
     {
       "date": "2026-09-11",
       "pnl": 0
+    },
+    {
+      "date": "2026-09-14",
+      "pnl": 0
     }
   ],
   "settings": {
@@ -630,7 +634,7 @@
   },
   "last_run": {
     "mode": "evening",
-    "ranAt": "2026-09-11 22:13:25 IST",
+    "ranAt": "2026-09-14 14:47:22 IST",
     "marketHealthy": true,
     "scanHits": 1172,
     "uniqueSymbols": 919,
