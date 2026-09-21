@@ -654,10 +654,10 @@
   },
   "last_run": {
     "mode": "evening",
-    "ranAt": "2026-09-21 14:49:31 IST",
+    "ranAt": "2026-09-21 23:48:19 IST",
     "marketHealthy": true,
-    "scanHits": 940,
-    "uniqueSymbols": 728,
+    "scanHits": 1097,
+    "uniqueSymbols": 883,
     "candidatesQualified": 71,
     "queued": 0,
     "closed": 0,
